@@ -1,2 +1,3 @@
 # Poker-zeta-server 
-controllo collegamento 
+
+Auth attiva.
