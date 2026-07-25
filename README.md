@@ -1,1 +1,2 @@
-# Poker-zeta-server 1.0
+# Poker-zeta-server 
+controllo collegamento 
