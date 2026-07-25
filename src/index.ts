@@ -2,15 +2,20 @@
  * Poker Zeta — Match Server
  * Punto di ingresso.
  *
- * Da questa versione nessun socket entra senza identità
- * verificata: il middleware io.use() rifiuta la connessione
- * prima che il client possa emettere un solo evento.
+ * Nessun socket entra senza identità verificata: il middleware
+ * io.use() rifiuta la connessione prima che il client possa
+ * emettere un solo evento.
  */
 
 import { createServer } from 'node:http';
 import { Server } from 'socket.io';
 import { env } from './config/env.js';
 import { verifyAccessToken } from './auth/verify-token.js';
+
+interface ConnectedPlayer {
+  userId: string;
+  username: string | null;
+}
 
 const httpServer = createServer((req, res) => {
   if (req.url === '/health' || req.url === '/') {
@@ -48,17 +53,21 @@ io.use(async (socket, next) => {
     socket.data.player = player;
     next();
   } catch {
-    // Nessun dettaglio al client: un messaggio d'errore preciso
-    // aiuterebbe solo chi sta sondando il server.
+    // Nessun dettaglio al client: un errore preciso aiuterebbe
+    // solo chi sta sondando il server.
     next(new Error('AUTH_NON_VALIDA'));
   }
 });
 
 io.on('connection', (socket) => {
-  const player = socket.data.player as { userId: string; username: string | null };
+  const player = socket.data.player as ConnectedPlayer;
+
   console.log(
     `Giocatore autenticato: ${player.username ?? '(senza nome)'} [${player.userId}]`,
   );
+
+  // Il client scopre chi è SECONDO IL SERVER, non secondo sé stesso.
+  socket.emit('server:welcome', player);
 
   socket.on('disconnect', (reason) => {
     console.log(`Disconnesso: ${player.userId} (${reason})`);
