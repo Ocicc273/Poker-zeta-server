@@ -2,24 +2,26 @@
  * Poker Zeta — Match Server
  * Punto di ingresso.
  *
- * Questa prima versione fa solo una cosa: partire e restare in
- * ascolto. Serve a verificare che l'infrastruttura Railway funzioni
- * prima di aggiungere qualsiasi logica di gioco.
+ * Da questa versione nessun socket entra senza identità
+ * verificata: il middleware io.use() rifiuta la connessione
+ * prima che il client possa emettere un solo evento.
  */
 
 import { createServer } from 'node:http';
 import { Server } from 'socket.io';
-
-// Railway assegna la porta tramite variabile d'ambiente. In locale
-// si usa 3001 come default.
-const PORT = Number(process.env.PORT) || 3001;
+import { env } from './config/env.js';
+import { verifyAccessToken } from './auth/verify-token.js';
 
 const httpServer = createServer((req, res) => {
-  // Endpoint di health check: Railway lo usa per sapere se il
-  // server è vivo. Risponde anche a un browser che apre l'URL.
   if (req.url === '/health' || req.url === '/') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', service: 'poker-zeta-server' }));
+    res.end(
+      JSON.stringify({
+        status: 'ok',
+        service: 'poker-zeta-server',
+        auth: 'enabled',
+      }),
+    );
     return;
   }
   res.writeHead(404);
@@ -28,20 +30,41 @@ const httpServer = createServer((req, res) => {
 
 const io = new Server(httpServer, {
   cors: {
-    // In sviluppo si accetta qualsiasi origine. Verrà ristretto al
-    // dominio del client prima del lancio.
+    // Verrà ristretto al dominio del client prima del lancio.
     origin: '*',
   },
 });
 
+io.use(async (socket, next) => {
+  const token = socket.handshake.auth?.token;
+
+  if (typeof token !== 'string' || token.length === 0) {
+    next(new Error('AUTH_TOKEN_MANCANTE'));
+    return;
+  }
+
+  try {
+    const player = await verifyAccessToken(token);
+    socket.data.player = player;
+    next();
+  } catch {
+    // Nessun dettaglio al client: un messaggio d'errore preciso
+    // aiuterebbe solo chi sta sondando il server.
+    next(new Error('AUTH_NON_VALIDA'));
+  }
+});
+
 io.on('connection', (socket) => {
-  console.log(`Client connesso: ${socket.id}`);
+  const player = socket.data.player as { userId: string; username: string | null };
+  console.log(
+    `Giocatore autenticato: ${player.username ?? '(senza nome)'} [${player.userId}]`,
+  );
 
   socket.on('disconnect', (reason) => {
-    console.log(`Client disconnesso: ${socket.id} (${reason})`);
+    console.log(`Disconnesso: ${player.userId} (${reason})`);
   });
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`Match Server in ascolto sulla porta ${PORT}`);
+httpServer.listen(env.PORT, () => {
+  console.log(`Match Server in ascolto sulla porta ${env.PORT}`);
 });
