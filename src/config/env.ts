@@ -1,11 +1,11 @@
 /**
  * Poker Zeta — Configurazione d'ambiente
  *
- * Le credenziali non sono MAI nel codice: vengono lette da
- * process.env, cioè dalle Variables di Railway. Questo file
- * verifica solo che esistano, e fa crashare il server subito
- * se manca qualcosa — meglio un errore all'avvio che un
- * comportamento imprevedibile a partita in corso.
+ * Legge tutto da process.env (Variables di Railway) e fa
+ * crashare il server all'avvio se manca qualcosa.
+ *
+ * Nota: qui basta la publishable key. Verificare un token non
+ * richiede privilegi — è Supabase a dire se è valido o no.
  */
 
 function required(name: string): string {
@@ -22,5 +22,5 @@ function required(name: string): string {
 export const env = {
   PORT: Number(process.env.PORT) || 3001,
   SUPABASE_URL: required('SUPABASE_URL'),
-  SUPABASE_SERVICE_ROLE_KEY: required('SUPABASE_SERVICE_ROLE_KEY'),
+  SUPABASE_PUBLISHABLE_KEY: required('SUPABASE_PUBLISHABLE_KEY'),
 } as const;
