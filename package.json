@@ -1,10 +1,10 @@
 {
   "name": "poker-zeta-server",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Match Server autoritativo per Poker Zeta",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "build": "rm -rf dist && tsc",
