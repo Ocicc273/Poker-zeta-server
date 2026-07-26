@@ -94,6 +94,8 @@ export interface TableView {
   players: readonly PlayerView[];
   availableActions: readonly AvailableAction[];
   isYourTurn: boolean;
+  /** Millisecondi rimasti al turno, null se non tocca a te. */
+  turnMillisLeft: number | null;
   isHandComplete: boolean;
   canStartNextHand: boolean;
   isBusted: boolean;
