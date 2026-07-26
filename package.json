@@ -1,13 +1,14 @@
 {
   "name": "poker-zeta-server",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Match Server autoritativo per Poker Zeta",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc --noEmit",
+    "test": "tsx src/tests/index.test.ts",
+    "build": "tsc --noEmit && tsx src/tests/index.test.ts",
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts"
   },
