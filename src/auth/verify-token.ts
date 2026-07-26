@@ -43,12 +43,12 @@ export async function verifyAccessToken(
 
   const userId = data.user.id;
 
+  let username: string | null = null;
+
   // Per leggere il profilo ci presentiamo CON il token del
   // giocatore: le RLS lo riconoscono e lasciano leggere la sua
   // riga. Se fallisce, l'autenticazione resta valida: il nome
   // è cosmetico.
-  let username: string | null = null;
-
   const asUser = createClient(env.SUPABASE_URL, env.SUPABASE_PUBLISHABLE_KEY, {
     ...authOptions,
     global: { headers: { Authorization: `Bearer ${token}` } },
@@ -59,6 +59,14 @@ export async function verifyAccessToken(
     .select('username')
     .eq('id', userId)
     .maybeSingle();
+
+  // Diagnostica: senza queste righe il nome resta vuoto e non si
+  // sa perché. Sono tre cause diverse con tre rimedi diversi.
+  if (profile.error) {
+    console.error('Lettura profilo fallita:', profile.error.message);
+  } else if (!profile.data) {
+    console.error(`Nessuna riga profiles per l'utente ${userId}`);
+  }
 
   if (!profile.error && profile.data) {
     username = (profile.data as { username: string | null }).username ?? null;
