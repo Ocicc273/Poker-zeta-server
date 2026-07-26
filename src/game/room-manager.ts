@@ -206,3 +206,15 @@ export function waitingRoomCount(): number {
   }
   return count;
 }
+
+/**
+ * Chiude tutte le stanze restituendo le fiche.
+ *
+ * Serve allo spegnimento del processo: un riavvio lascerebbe le
+ * sessioni aperte nel database e le fiche fuori dal wallet, senza
+ * nessuno a reclamarle.
+ */
+export async function closeAllRooms(): Promise<void> {
+  const players = [...rooms.keys()];
+  await Promise.allSettled(players.map((playerId) => closeRoom(playerId)));
+}
