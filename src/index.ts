@@ -2,9 +2,9 @@
  * Poker Zeta — Match Server
  * Punto di ingresso.
  *
- * Da questa versione il server carica il motore di gioco:
- * le stesse regole che girano nel client, ma qui sono
- * l'unica versione che conta.
+ * Il server è autoritativo: riceve richieste di azione, le fa
+ * validare al motore e rispedisce una proiezione dello stato.
+ * Nulla di ciò che arriva dal client viene creduto sulla parola.
  */
 
 import { createServer } from 'node:http';
@@ -12,14 +12,24 @@ import { Server } from 'socket.io';
 import { env } from './config/env.js';
 import { verifyAccessToken } from './auth/verify-token.js';
 import * as engine from './engine/index.js';
+import {
+  ClientEvent,
+  ServerEvent,
+  type ActionPayload,
+  type JoinTablePayload,
+} from './game/protocol.js';
+import {
+  activeRoomCount,
+  closeRoom,
+  createRoom,
+  getRoom,
+} from './game/room-manager.js';
 
 interface ConnectedPlayer {
   userId: string;
   username: string | null;
 }
 
-// Se il motore non si carica, il server non deve nemmeno partire:
-// meglio un crash all'avvio che un tavolo senza regole.
 const engineExports = Object.keys(engine).length;
 if (engineExports === 0) {
   throw new Error('Motore di gioco non caricato: src/engine è vuoto.');
@@ -34,6 +44,7 @@ const httpServer = createServer((req, res) => {
         service: 'poker-zeta-server',
         auth: 'enabled',
         engine: engineExports,
+        rooms: activeRoomCount(),
       }),
     );
     return;
@@ -68,14 +79,51 @@ io.use(async (socket, next) => {
 
 io.on('connection', (socket) => {
   const player = socket.data.player as ConnectedPlayer;
+  const label = player.username ?? '(senza nome)';
 
-  console.log(
-    `Giocatore autenticato: ${player.username ?? '(senza nome)'} [${player.userId}]`,
-  );
+  console.log(`Giocatore autenticato: ${label} [${player.userId}]`);
+  socket.emit(ServerEvent.Welcome, player);
 
-  socket.emit('server:welcome', player);
+  socket.on(ClientEvent.JoinTable, (payload: JoinTablePayload) => {
+    const room = createRoom(socket.id, {
+      humanPlayerId: player.userId,
+      humanName: player.username ?? 'Tu',
+      buyIn: payload?.buyIn,
+      sendState: (view) => socket.emit(ServerEvent.TableState, view),
+      sendError: (message) => socket.emit(ServerEvent.Error, { message }),
+    });
+
+    console.log(`Stanza aperta per ${label} (${socket.id})`);
+    room.start();
+  });
+
+  socket.on(ClientEvent.Action, (payload: ActionPayload) => {
+    const room = getRoom(socket.id);
+    if (!room) {
+      socket.emit(ServerEvent.Error, { message: 'Nessun tavolo attivo.' });
+      return;
+    }
+    room.handleHumanAction(payload?.type, payload?.amount);
+  });
+
+  socket.on(ClientEvent.NextHand, () => {
+    const room = getRoom(socket.id);
+    if (!room) {
+      socket.emit(ServerEvent.Error, { message: 'Nessun tavolo attivo.' });
+      return;
+    }
+    room.startNextHand();
+  });
+
+  socket.on(ClientEvent.LeaveTable, () => {
+    closeRoom(socket.id);
+    socket.emit(ServerEvent.TableClosed, { reason: 'Hai lasciato il tavolo.' });
+  });
 
   socket.on('disconnect', (reason) => {
+    // La stanza muore con il socket: senza questo, i timer dei bot
+    // continuerebbero a girare su una partita che nessuno guarda.
+    closeRoom(socket.id);
     console.log(`Disconnesso: ${player.userId} (${reason})`);
   });
 });
