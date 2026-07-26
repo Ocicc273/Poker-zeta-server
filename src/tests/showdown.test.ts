@@ -1,10 +1,13 @@
 /**
  * Poker Zeta — Test della distribuzione allo showdown
  *
- * Qui entra in gioco il valutatore delle mani, quindi servono carte
- * vere. Sono separati da pot.test.ts di proposito: se il modo in cui
- * costruisco le carte non basta al valutatore, cade solo questo file
- * e l aritmetica dei pot resta protetta.
+ * Qui entra in gioco il valutatore delle mani, quindi le carte sono
+ * costruite dal parser del motore invece che a mano.
+ *
+ * Le mani condividono qualche carta fra giocatori: impossibile con
+ * un mazzo vero, ma il valutatore esamina ogni giocatore
+ * separatamente e a questi test serve solo un ordine di forza
+ * prevedibile.
  */
 
 import { test } from 'node:test';
@@ -19,40 +22,17 @@ import {
   type ShowdownEntry,
 } from '../engine/pot.js';
 
-import { card } from './helpers.js';
+import type { Card } from '../engine/cards.js';
+import { hand } from './helpers.js';
 
 /** Scala reale di picche più due carte irrilevanti. */
-const SCALA_REALE = [
-  card(14, 's'),
-  card(13, 's'),
-  card(12, 's'),
-  card(11, 's'),
-  card(10, 's'),
-  card(2, 'd'),
-  card(3, 'c'),
-];
+const SCALA_REALE = hand('As Ks Qs Js Ts 2d 3c');
 
 /** Coppia di due. */
-const COPPIA_DI_DUE = [
-  card(2, 'h'),
-  card(2, 'd'),
-  card(7, 'c'),
-  card(9, 'h'),
-  card(11, 'd'),
-  card(4, 'c'),
-  card(6, 's'),
-];
+const COPPIA_DI_DUE = hand('2h 2d 7c 9h Jd 4c 6s');
 
 /** Coppia di tre: batte la coppia di due, perde con tutto il resto. */
-const COPPIA_DI_TRE = [
-  card(3, 'h'),
-  card(3, 'd'),
-  card(7, 'c'),
-  card(9, 'h'),
-  card(11, 'd'),
-  card(4, 'c'),
-  card(6, 's'),
-];
+const COPPIA_DI_TRE = hand('3h 3d 7c 9h Jd 4c 6s');
 
 test('showdown: chi è all-in corto vince solo il piatto principale', () => {
   // A ha la mano migliore in assoluto ma ha impegnato 50: può
@@ -84,8 +64,8 @@ test('showdown: chi è all-in corto vince solo il piatto principale', () => {
 });
 
 test('showdown: le fiche distribuite sono sempre quelle raccolte', () => {
-  // L invariante che conta più di ogni altro: qualunque sia
-  // l esito, non nascono né sparaiscono Z-Coins.
+  // L'invariante che conta più di ogni altro: qualunque sia l'esito,
+  // non nascono né sparaiscono Z-Coins.
   const casi: Contribution[][] = [
     [
       { playerId: 'A', amount: 100, eligible: true },
@@ -103,7 +83,7 @@ test('showdown: le fiche distribuite sono sempre quelle raccolte', () => {
     ],
   ];
 
-  const mani = new Map<string, readonly ReturnType<typeof card>[]>([
+  const mani = new Map<string, readonly Card[]>([
     ['A', SCALA_REALE],
     ['B', COPPIA_DI_DUE],
     ['C', COPPIA_DI_TRE],
@@ -128,8 +108,8 @@ test('showdown: le fiche distribuite sono sempre quelle raccolte', () => {
 
 test('showdown: a parità di mano il piatto si divide', () => {
   // Due mani identiche: impossibile con un mazzo vero, deliberato
-  // qui per forzare la parità senza dipendere da come il
-  // valutatore ordina mani diverse.
+  // qui per forzare la parità senza dipendere da come il valutatore
+  // ordina mani diverse.
   const contributions: Contribution[] = [
     { playerId: 'A', amount: 100, eligible: true },
     { playerId: 'B', amount: 100, eligible: true },
@@ -155,8 +135,8 @@ test('showdown: a parità di mano il piatto si divide', () => {
 });
 
 test('showdown: il resto indivisibile non viene mai scartato', () => {
-  // Piatto di 101 fra due vincitori a pari merito: 50 e 50 fanno
-  // 100, e la fiche dispari deve andare a qualcuno.
+  // Piatto di 101: qualunque sia la ripartizione, la fiche dispari
+  // deve finire a qualcuno e non essere buttata.
   const contributions: Contribution[] = [
     { playerId: 'A', amount: 50, eligible: true },
     { playerId: 'B', amount: 51, eligible: true },
