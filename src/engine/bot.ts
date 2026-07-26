@@ -2,13 +2,12 @@
  * Poker Zeta — Logica dei bot
  * Riferimento: SDD Server Authoritative
  *
- * Avversari controllati dal sistema per il gioco in locale.
+ * Avversari controllati dal sistema.
  *
  * AMBITO E LIMITI
  * Questa è una logica a soglie fisse, non un'intelligenza di poker.
  * Valuta la forza della propria mano e decide in base a soglie
- * statiche, senza modellare gli avversari, le pot odds reali, la
- * posizione o il bluff.
+ * statiche, senza modellare gli avversari, la posizione o il bluff.
  *
  * Serve a due scopi: far girare mani complete per verificare il
  * motore, e dare al giocatore un avversario con cui provare
@@ -43,6 +42,26 @@ const PROFILES: Record<BotProfile, ProfileThresholds> = {
   balanced: { callThreshold: 0.35, raiseThreshold: 0.6, betSizing: 0.5 },
   loose: { callThreshold: 0.22, raiseThreshold: 0.5, betSizing: 0.45 },
 };
+
+/**
+ * Prezzo sotto il quale la forza della mano smette di contare.
+ *
+ * Chiamare 2 per un piatto da 100 significa versare il 2% del
+ * piatto finale: basta vincere una volta su cinquanta perché sia
+ * corretto, e non esistono due carte così brutte. Foldare qui è
+ * sempre un errore, quindi la soglia viene scavalcata.
+ */
+const IRRESISTIBLE_PRICE = 0.12;
+
+/**
+ * Forza minima per impegnare l'intero stack quando chiamare
+ * significa restare senza fiche.
+ *
+ * Diverso dal caso precedente: qui il prezzo non è irrisorio e
+ * perdere la mano significa uscire dal tavolo, quindi serve un
+ * motivo reale — ma non è più un divieto assoluto come prima.
+ */
+const COMMIT_STRENGTH_BAR = 0.55;
 
 /* ────────────────────────────────────────────────────────────
    VALUTAZIONE DELLA FORZA
@@ -167,8 +186,22 @@ export function decideBotAction(context: BotDecisionContext): PlayerAction {
 
   const checkAction = can(ActionType.Check);
   const callAction = can(ActionType.Call);
+  const allInAction = can(ActionType.AllIn);
   const raiseAction = can(ActionType.Raise) ?? can(ActionType.Bet);
   const foldAction = can(ActionType.Fold);
+
+  /**
+   * Resta in mano con l'azione giusta.
+   *
+   * Quando la puntata supera lo stack il motore può offrire All-in
+   * al posto di Call: qui si prende quella che esiste, invece di
+   * pretenderne una e ripiegare sul fold.
+   */
+  const commit = (): PlayerAction | null => {
+    if (callAction) return { type: ActionType.Call, playerId };
+    if (allInAction) return { type: ActionType.AllIn, playerId };
+    return null;
+  };
 
   /* ── Nessuna puntata da affrontare ──────────────────────── */
   if (toCall === 0) {
@@ -186,36 +219,54 @@ export function decideBotAction(context: BotDecisionContext): PlayerAction {
 
   /* ── C'è una puntata da affrontare ──────────────────────── */
 
-  // Pot odds: quanto costa in rapporto a quanto si può vincere.
-  // Una mano debole può valere un call se il prezzo è irrisorio.
-  const potOdds = potSize > 0 ? toCall / (potSize + toCall) : 1;
-  const adjustedThreshold = Math.max(
-    thresholds.callThreshold * 0.6,
-    thresholds.callThreshold * (0.5 + potOdds)
-  );
+  // Nessuno può pagare più del proprio stack: un all-in avversario
+  // da 100 contro 2 fiche residue costa 2, non 100. Ragionare sul
+  // valore nominale faceva sembrare proibitivo ciò che era regalato,
+  // e il bot foldava mani che nessuno folderebbe mai.
+  const effectiveCall = Math.min(toCall, stack);
 
-  // Mano molto forte: si rilancia.
+  // Prezzo reale: quale frazione del piatto finale si sta versando.
+  const price =
+    effectiveCall > 0 ? effectiveCall / (potSize + effectiveCall) : 0;
+
+  // Chiamare significa restare senza fiche?
+  const wouldBeAllIn = effectiveCall >= stack;
+
+  /* ── Prezzo irrisorio: si entra a prescindere ───────────── */
+  if (price <= IRRESISTIBLE_PRICE) {
+    const action = commit();
+    if (action) return action;
+  }
+
+  /* ── Mano molto forte: si rilancia ──────────────────────── */
   if (strength >= thresholds.raiseThreshold && raiseAction) {
     const target = computeBetTarget(raiseAction, potSize + toCall, thresholds.betSizing);
     return { type: raiseAction.type, playerId, amount: target };
   }
 
-  // Mano sufficiente: si chiama, se il costo non è proibitivo.
-  const callCostRatio = stack > 0 ? toCall / stack : 1;
-  if (strength >= adjustedThreshold && callCostRatio <= 0.5 && callAction) {
-    return { type: ActionType.Call, playerId };
+  /* ── Mano sufficiente: si chiama ────────────────────────── */
+
+  // Più il prezzo è alto, più forza serve. Con un prezzo basso la
+  // soglia scende, senza mai azzerarsi.
+  const adjustedThreshold = Math.max(
+    thresholds.callThreshold * 0.5,
+    thresholds.callThreshold * (0.5 + price)
+  );
+
+  if (strength >= adjustedThreshold) {
+    // Impegnare tutto lo stack richiede un motivo in più: qui il
+    // prezzo non è irrisorio e perdere significa uscire dal tavolo.
+    if (!wouldBeAllIn || strength >= COMMIT_STRENGTH_BAR) {
+      const action = commit();
+      if (action) return action;
+    }
   }
 
-  // Mano eccellente contro una puntata che supera lo stack:
-  // si va all-in invece di foldare.
+  /* ── Mano eccellente: si va all-in comunque ─────────────── */
   if (strength >= 0.8) {
-    const allIn = can(ActionType.AllIn);
-    if (allIn) {
-      return { type: ActionType.AllIn, playerId };
-    }
-    if (callAction) {
-      return { type: ActionType.Call, playerId };
-    }
+    if (allInAction) return { type: ActionType.AllIn, playerId };
+    const action = commit();
+    if (action) return action;
   }
 
   /* ── Ripiego ─────────────────────────────────────────────── */
