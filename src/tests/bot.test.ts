@@ -21,10 +21,10 @@ import {
 import { card } from './helpers.js';
 
 /** Due carte scoordinate e basse: la mano più debole possibile. */
-const MANO_PESSIMA = [card(7, 'c'), card(2, 'd')];
+const MANO_PESSIMA = [card('7c'), card('2d')];
 
 /** Coppia d'assi: la mano più forte possibile preflop. */
-const MANO_OTTIMA = [card(14, 's'), card(14, 'h')];
+const MANO_OTTIMA = [card('As'), card('Ah')];
 
 test('bot: con stack corto non folda contro un prezzo irrisorio', () => {
   // Due fiche contro un piatto da 150: chiamare costa 2, non 100.
