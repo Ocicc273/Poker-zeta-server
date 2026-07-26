@@ -72,5 +72,11 @@ export async function verifyAccessToken(
     username = (profile.data as { username: string | null }).username ?? null;
   }
 
-  return { userId, username };
+  // Se il profilo non ha ancora un nome, meglio la parte iniziale
+  // dell'email che un tavolo pieno di "(senza nome)". Resta un
+  // ripiego: il nome vero va scelto dal giocatore in fase di
+  // registrazione.
+  const fallback = data.user.email?.split('@')[0] ?? null;
+
+  return { userId, username: username ?? fallback };
 }
