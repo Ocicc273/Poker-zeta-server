@@ -4,7 +4,8 @@
  *
  * Il server è autoritativo: riceve richieste di azione, le fa
  * validare al motore e rispedisce una proiezione dello stato.
- * Nulla di ciò che arriva dal client viene creduto sulla parola.
+ * Da questa versione muove anche Z-Coins vere, quindi ogni
+ * ingresso al tavolo passa da un addebito reale.
  */
 
 import { createServer } from 'node:http';
@@ -12,6 +13,7 @@ import { Server } from 'socket.io';
 import { env } from './config/env.js';
 import { verifyAccessToken } from './auth/verify-token.js';
 import * as engine from './engine/index.js';
+import { WalletError } from './wallet/table-session.js';
 import {
   ClientEvent,
   ServerEvent,
@@ -44,6 +46,7 @@ const httpServer = createServer((req, res) => {
         service: 'poker-zeta-server',
         auth: 'enabled',
         engine: engineExports,
+        wallet: 'enabled',
         rooms: activeRoomCount(),
       }),
     );
@@ -84,17 +87,30 @@ io.on('connection', (socket) => {
   console.log(`Giocatore autenticato: ${label} [${player.userId}]`);
   socket.emit(ServerEvent.Welcome, player);
 
-  socket.on(ClientEvent.JoinTable, (payload: JoinTablePayload) => {
-    const room = createRoom(socket.id, {
-      humanPlayerId: player.userId,
-      humanName: player.username ?? 'Tu',
-      buyIn: payload?.buyIn,
-      sendState: (view) => socket.emit(ServerEvent.TableState, view),
-      sendError: (message) => socket.emit(ServerEvent.Error, { message }),
-    });
+  socket.on(ClientEvent.JoinTable, async (payload: JoinTablePayload) => {
+    try {
+      const room = await createRoom(socket.id, {
+        humanPlayerId: player.userId,
+        humanName: player.username ?? 'Tu',
+        buyIn: payload?.buyIn,
+        sendState: (view) => socket.emit(ServerEvent.TableState, view),
+        sendError: (message) => socket.emit(ServerEvent.Error, { message }),
+      });
 
-    console.log(`Stanza aperta per ${label} (${socket.id})`);
-    room.start();
+      console.log(`Stanza aperta per ${label} (${socket.id})`);
+      room.start();
+    } catch (error) {
+      // Saldo insufficiente è la causa più comune, ed è una
+      // risposta legittima: il tavolo semplicemente non si apre.
+      const message =
+        error instanceof WalletError
+          ? error.message
+          : 'Impossibile aprire il tavolo.';
+
+      console.error(`Ingresso rifiutato per ${label}:`, error);
+      socket.emit(ServerEvent.Error, { message });
+      socket.emit(ServerEvent.TableClosed, { reason: message });
+    }
   });
 
   socket.on(ClientEvent.Action, (payload: ActionPayload) => {
@@ -115,16 +131,24 @@ io.on('connection', (socket) => {
     room.startNextHand();
   });
 
-  socket.on(ClientEvent.LeaveTable, () => {
-    closeRoom(socket.id);
-    socket.emit(ServerEvent.TableClosed, { reason: 'Hai lasciato il tavolo.' });
+  socket.on(ClientEvent.LeaveTable, async () => {
+    const returned = await closeRoom(socket.id);
+    socket.emit(ServerEvent.TableClosed, {
+      reason:
+        returned === null
+          ? 'Hai lasciato il tavolo.'
+          : `Hai lasciato il tavolo con ${returned.toLocaleString('it-IT')} Z-Coins.`,
+    });
   });
 
-  socket.on('disconnect', (reason) => {
-    // La stanza muore con il socket: senza questo, i timer dei bot
-    // continuerebbero a girare su una partita che nessuno guarda.
-    closeRoom(socket.id);
-    console.log(`Disconnesso: ${player.userId} (${reason})`);
+  socket.on('disconnect', async (reason) => {
+    // La stanza muore con il socket, ma le fiche no: vanno
+    // restituite prima di dimenticarsi della partita.
+    const returned = await closeRoom(socket.id);
+    console.log(
+      `Disconnesso: ${player.userId} (${reason})` +
+        (returned !== null ? ` — riaccreditate ${returned} Z-Coins` : ''),
+    );
   });
 });
 
@@ -133,12 +157,13 @@ httpServer.listen(env.PORT, () => {
     `Match Server in ascolto sulla porta ${env.PORT} — motore: ${engineExports} export`,
   );
 });
+
 /**
  * Rete di sicurezza del processo.
  *
- * Un'eccezione sfuggita non deve far sparire il server senza lasciare
- * traccia: qui viene registrata prima che Railway riavvii il
- * container, così nei log resta il motivo.
+ * Un'eccezione sfuggita non deve far sparire il server senza
+ * lasciare traccia: qui viene registrata prima che Railway riavvii
+ * il container, così nei log resta il motivo.
  */
 process.on('uncaughtException', (error) => {
   console.error('Eccezione non gestita:', error);
