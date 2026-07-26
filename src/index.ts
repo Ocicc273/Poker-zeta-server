@@ -4,8 +4,8 @@
  *
  * Il server è autoritativo: riceve richieste di azione, le fa
  * validare al motore e rispedisce una proiezione dello stato.
- * Da questa versione muove anche Z-Coins vere, quindi ogni
- * ingresso al tavolo passa da un addebito reale.
+ * Le partite appartengono ai giocatori, non alle connessioni:
+ * un socket che cade non porta via il tavolo.
  */
 
 import { createServer } from 'node:http';
@@ -23,8 +23,11 @@ import {
 import {
   activeRoomCount,
   closeRoom,
-  createRoom,
-  getRoom,
+  configureRoomManager,
+  detachSocket,
+  getRoomByPlayer,
+  joinRoom,
+  waitingRoomCount,
 } from './game/room-manager.js';
 
 interface ConnectedPlayer {
@@ -48,6 +51,7 @@ const httpServer = createServer((req, res) => {
         engine: engineExports,
         wallet: 'enabled',
         rooms: activeRoomCount(),
+        waiting: waitingRoomCount(),
       }),
     );
     return;
@@ -62,6 +66,8 @@ const io = new Server(httpServer, {
     origin: '*',
   },
 });
+
+configureRoomManager(io);
 
 io.use(async (socket, next) => {
   const token = socket.handshake.auth?.token;
@@ -89,16 +95,20 @@ io.on('connection', (socket) => {
 
   socket.on(ClientEvent.JoinTable, async (payload: JoinTablePayload) => {
     try {
-      const room = await createRoom(socket.id, {
-        humanPlayerId: player.userId,
-        humanName: player.username ?? 'Tu',
-        buyIn: payload?.buyIn,
-        sendState: (view) => socket.emit(ServerEvent.TableState, view),
-        sendError: (message) => socket.emit(ServerEvent.Error, { message }),
-      });
+      const { reattached } = await joinRoom(
+        socket.id,
+        player.userId,
+        player.username ?? 'Tu',
+        payload?.buyIn,
+      );
+
+      if (reattached) {
+        console.log(`${label} è rientrato al tavolo`);
+        return;
+      }
 
       console.log(`Stanza aperta per ${label} (${socket.id})`);
-      room.start();
+      getRoomByPlayer(player.userId)?.start();
     } catch (error) {
       // Saldo insufficiente è la causa più comune, ed è una
       // risposta legittima: il tavolo semplicemente non si apre.
@@ -114,7 +124,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on(ClientEvent.Action, (payload: ActionPayload) => {
-    const room = getRoom(socket.id);
+    const room = getRoomByPlayer(player.userId);
     if (!room) {
       socket.emit(ServerEvent.Error, { message: 'Nessun tavolo attivo.' });
       return;
@@ -123,7 +133,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on(ClientEvent.NextHand, () => {
-    const room = getRoom(socket.id);
+    const room = getRoomByPlayer(player.userId);
     if (!room) {
       socket.emit(ServerEvent.Error, { message: 'Nessun tavolo attivo.' });
       return;
@@ -132,7 +142,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on(ClientEvent.LeaveTable, async () => {
-    const returned = await closeRoom(socket.id);
+    // Uscita volontaria: qui il giocatore ha deciso, quindi si
+    // chiude subito e le fiche rientrano senza attesa.
+    const returned = await closeRoom(player.userId);
+
     socket.emit(ServerEvent.TableClosed, {
       reason:
         returned === null
@@ -141,14 +154,11 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('disconnect', async (reason) => {
-    // La stanza muore con il socket, ma le fiche no: vanno
-    // restituite prima di dimenticarsi della partita.
-    const returned = await closeRoom(socket.id);
-    console.log(
-      `Disconnesso: ${player.userId} (${reason})` +
-        (returned !== null ? ` — riaccreditate ${returned} Z-Coins` : ''),
-    );
+  socket.on('disconnect', (reason) => {
+    // Nessun riaccredito qui: il tavolo resta in attesa, e solo se
+    // il giocatore non torna verrà chiuso dal timer di abbandono.
+    detachSocket(player.userId, socket.id);
+    console.log(`Socket chiuso: ${player.userId} (${reason}) — tavolo in attesa`);
   });
 });
 
