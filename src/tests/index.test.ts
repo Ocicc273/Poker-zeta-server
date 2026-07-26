@@ -10,6 +10,7 @@
  */
 
 import './cards.test.js';
+import './hand-rank.test.js';
 import './bot.test.js';
 import './table-config.test.js';
 import './twister.test.js';
