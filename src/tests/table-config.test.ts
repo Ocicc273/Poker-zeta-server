@@ -27,7 +27,10 @@ test('buy-in: valori non numerici ricadono sul minimo', () => {
   assert.equal(sanitizeBuyIn(undefined), 100);
   assert.equal(sanitizeBuyIn(null), 100);
   assert.equal(sanitizeBuyIn(Number.NaN), 100);
-  assert.equal(sanitizeBuyIn(Number.POSITIVE_INFINITY), 50_000);
+  // Infinity non è un numero finito: ricade sul minimo, come
+  // qualunque altro valore non valido. Meglio concedere poco che
+  // regalare il massimo a chi manda spazzatura.
+  assert.equal(sanitizeBuyIn(Number.POSITIVE_INFINITY), 100);
 });
 
 test('buy-in: un valore valido resta intero e invariato', () => {
