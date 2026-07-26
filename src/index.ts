@@ -133,3 +133,17 @@ httpServer.listen(env.PORT, () => {
     `Match Server in ascolto sulla porta ${env.PORT} — motore: ${engineExports} export`,
   );
 });
+/**
+ * Rete di sicurezza del processo.
+ *
+ * Un'eccezione sfuggita non deve far sparire il server senza lasciare
+ * traccia: qui viene registrata prima che Railway riavvii il
+ * container, così nei log resta il motivo.
+ */
+process.on('uncaughtException', (error) => {
+  console.error('Eccezione non gestita:', error);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Promise rifiutata senza gestore:', reason);
+});
