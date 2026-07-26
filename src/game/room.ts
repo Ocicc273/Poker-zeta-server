@@ -129,6 +129,28 @@ export class Room {
     this.closed = true;
     this.clearBotTimer();
   }
+  /**
+   * Stack attuale del giocatore umano.
+   *
+   * Serve al riaccredito quando lascia il tavolo. Durante una mano
+   * lo stack vero è quello dentro lo stato del motore, perché le
+   * fiche già puntate ne sono uscite; fra una mano e l'altra vale
+   * quello persistente.
+   */
+  humanStack(): number {
+    const state = this.state;
+
+    if (state !== null && !isHandComplete(state)) {
+      const inHand = state.players.find((p) => p.playerId === this.humanId);
+      if (inHand) {
+        // Le fiche impegnate nel piatto sono ancora sue finché la
+        // mano non si chiude: contarle evita di regalarle al banco.
+        return inHand.stack + inHand.committedThisStreet;
+      }
+    }
+
+    return this.stacks.get(this.humanId) ?? 0;
+  }
 
   /* ── Mani ──────────────────────────────────────────────── */
 
