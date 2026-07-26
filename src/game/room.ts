@@ -267,30 +267,42 @@ export class Room {
   private runBotTurn(bot: BotDefinition): void {
     if (this.closed) return;
 
-    const state = this.state;
-    if (!state || isHandComplete(state)) return;
-    if (state.toActPlayerId !== bot.playerId) return;
+    // Questo metodo gira dentro un setTimeout: un'eccezione qui non
+    // ha nessuno sopra che la raccolga e abbatterebbe il processo,
+    // chiudendo i tavoli di tutti. Il rischio non è accettabile per
+    // il turno di un bot.
+    try {
+      const state = this.state;
+      if (!state || isHandComplete(state)) return;
+      if (state.toActPlayerId !== bot.playerId) return;
 
-    const player = state.players.find((p) => p.playerId === bot.playerId);
-    if (!player || player.status !== PlayerStatus.Active) return;
+      const player = state.players.find((p) => p.playerId === bot.playerId);
+      if (!player || player.status !== PlayerStatus.Active) return;
 
-    const available = getAvailableActions(state);
-    if (available.length === 0) return;
+      const available = getAvailableActions(state);
+      if (available.length === 0) return;
 
-    const decision = decideBotAction({
-      playerId: bot.playerId,
-      profile: bot.profile,
-      holeCards: player.holeCards,
-      communityCards: state.communityCards,
-      street: state.street,
-      available,
-      toCall: state.currentBet - player.committedThisStreet,
-      potSize: currentPotTotal(state),
-      stack: player.stack,
-    });
+      const decision = decideBotAction({
+        playerId: bot.playerId,
+        profile: bot.profile,
+        holeCards: player.holeCards,
+        communityCards: state.communityCards,
+        street: state.street,
+        available,
+        toCall: state.currentBet - player.committedThisStreet,
+        potSize: currentPotTotal(state),
+        stack: player.stack,
+      });
 
-    this.applyAndBroadcast(bot.playerId, decision.type, decision.amount);
-    this.scheduleBotTurn();
+      this.applyAndBroadcast(bot.playerId, decision.type, decision.amount);
+      this.scheduleBotTurn();
+    } catch (error) {
+      console.error(
+        `Turno bot fallito [${bot.playerId}] nella stanza ${this.roomId}:`,
+        error,
+      );
+      this.sendError('Errore interno durante il turno di un avversario.');
+    }
   }
 
   private clearBotTimer(): void {
@@ -347,7 +359,13 @@ export class Room {
 
   private broadcast(): void {
     if (this.closed) return;
-    this.sendState(this.buildView());
+
+    try {
+      this.sendState(this.buildView());
+    } catch (error) {
+      console.error(`Proiezione fallita nella stanza ${this.roomId}:`, error);
+      this.sendError('Errore interno nella lettura del tavolo.');
+    }
   }
 
   /**
