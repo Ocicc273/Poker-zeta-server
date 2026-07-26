@@ -387,7 +387,8 @@ export class Room {
         const holeCards = engineState?.holeCards ?? [];
 
         const visible =
-          isSelf || (complete && !this.folded.has(playerId) && holeCards.length > 0);
+          isSelf ||
+          (complete && !this.folded.has(playerId) && holeCards.length > 0);
 
         return {
           playerId,
@@ -429,3 +430,4 @@ export class Room {
       log: this.log,
     };
   }
+      }
