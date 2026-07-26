@@ -2,19 +2,27 @@
  * Poker Zeta — Match Server
  * Punto di ingresso.
  *
- * Nessun socket entra senza identità verificata: il middleware
- * io.use() rifiuta la connessione prima che il client possa
- * emettere un solo evento.
+ * Da questa versione il server carica il motore di gioco:
+ * le stesse regole che girano nel client, ma qui sono
+ * l'unica versione che conta.
  */
 
 import { createServer } from 'node:http';
 import { Server } from 'socket.io';
 import { env } from './config/env.js';
 import { verifyAccessToken } from './auth/verify-token.js';
+import * as engine from './engine/index.js';
 
 interface ConnectedPlayer {
   userId: string;
   username: string | null;
+}
+
+// Se il motore non si carica, il server non deve nemmeno partire:
+// meglio un crash all'avvio che un tavolo senza regole.
+const engineExports = Object.keys(engine).length;
+if (engineExports === 0) {
+  throw new Error('Motore di gioco non caricato: src/engine è vuoto.');
 }
 
 const httpServer = createServer((req, res) => {
@@ -25,6 +33,7 @@ const httpServer = createServer((req, res) => {
         status: 'ok',
         service: 'poker-zeta-server',
         auth: 'enabled',
+        engine: engineExports,
       }),
     );
     return;
@@ -53,8 +62,6 @@ io.use(async (socket, next) => {
     socket.data.player = player;
     next();
   } catch {
-    // Nessun dettaglio al client: un errore preciso aiuterebbe
-    // solo chi sta sondando il server.
     next(new Error('AUTH_NON_VALIDA'));
   }
 });
@@ -66,7 +73,6 @@ io.on('connection', (socket) => {
     `Giocatore autenticato: ${player.username ?? '(senza nome)'} [${player.userId}]`,
   );
 
-  // Il client scopre chi è SECONDO IL SERVER, non secondo sé stesso.
   socket.emit('server:welcome', player);
 
   socket.on('disconnect', (reason) => {
@@ -75,5 +81,7 @@ io.on('connection', (socket) => {
 });
 
 httpServer.listen(env.PORT, () => {
-  console.log(`Match Server in ascolto sulla porta ${env.PORT}`);
+  console.log(
+    `Match Server in ascolto sulla porta ${env.PORT} — motore: ${engineExports} export`,
+  );
 });
