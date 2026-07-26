@@ -61,6 +61,16 @@ const BOTS: readonly BotDefinition[] = [
  */
 const BOT_THINK_MS = 900;
 
+/**
+ * Tempo concesso al giocatore per agire.
+ *
+ * Non è una scortesia: senza scadenza un solo giocatore assente
+ * blocca il tavolo a tempo indeterminato. Venticinque secondi
+ * bastano per una decisione ponderata e non fanno addormentare
+ * chi aspetta.
+ */
+const TURN_MS = 25_000;
+
 /* ── Stanza ──────────────────────────────────────────────── */
 
 export interface RoomOptions {
@@ -93,6 +103,8 @@ export class Room {
   private folded = new Set<PlayerId>();
   private dealerSeat = 0;
   private botTimer: ReturnType<typeof setTimeout> | null = null;
+  private turnTimer: ReturnType<typeof setTimeout> | null = null;
+  private turnDeadline: number | null = null;
   private closed = false;
 
   constructor(options: RoomOptions) {
@@ -124,18 +136,20 @@ export class Room {
     this.startNextHand();
   }
 
-  /** Chiude la stanza e annulla ogni turno bot in sospeso. */
+  /** Chiude la stanza e annulla ogni conto alla rovescia. */
   close(): void {
     this.closed = true;
     this.clearBotTimer();
+    this.clearTurnTimer();
   }
+
   /**
    * Stack attuale del giocatore umano.
    *
-   * Serve al riaccredito quando lascia il tavolo. Durante una mano
-   * lo stack vero è quello dentro lo stato del motore, perché le
-   * fiche già puntate ne sono uscite; fra una mano e l'altra vale
-   * quello persistente.
+   * Serve al riaccredito quando lascia il tavolo. Le fiche già
+   * versate nel piatto NON contano: restituirle renderebbe
+   * l'uscita a metà mano un modo per annullare una puntata
+   * perdente. Uscire equivale a foldare, e chi folda le lascia lì.
    */
   humanStack(): number {
     const state = this.state;
@@ -143,16 +157,14 @@ export class Room {
     if (state !== null && !isHandComplete(state)) {
       const inHand = state.players.find((p) => p.playerId === this.humanId);
       if (inHand) {
-        // Le fiche impegnate nel piatto sono ancora sue finché la
-        // mano non si chiude: contarle evita di regalarle al banco.
-        return inHand.stack + inHand.committedThisStreet;
+        return inHand.stack;
       }
     }
 
     return this.stacks.get(this.humanId) ?? 0;
   }
-  
-/**
+
+  /**
    * Ritrasmette lo stato corrente.
    *
    * Serve a un client che si riattacca a una partita già in corso:
@@ -162,7 +174,7 @@ export class Room {
   resendState(): void {
     this.broadcast();
   }
-  
+
   /* ── Mani ──────────────────────────────────────────────── */
 
   startNextHand(): void {
@@ -250,7 +262,9 @@ export class Room {
     try {
       next = applyAction(current, { type, playerId, amount });
     } catch (error) {
-      // Azione rifiutata dal motore: lo stato resta quello di prima.
+      // Azione rifiutata dal motore: lo stato resta quello di prima
+      // e il conto alla rovescia continua, perché il turno non è
+      // stato consumato.
       this.sendError((error as Error).message);
       this.broadcast();
       return;
@@ -274,6 +288,86 @@ export class Room {
     }
 
     this.broadcast();
+  }
+
+  /* ── Turno del giocatore ───────────────────────────────── */
+
+  private clearTurnTimer(): void {
+    if (this.turnTimer !== null) {
+      clearTimeout(this.turnTimer);
+      this.turnTimer = null;
+    }
+    this.turnDeadline = null;
+  }
+
+  /**
+   * Allinea il conto alla rovescia allo stato corrente.
+   *
+   * Viene invocato a ogni trasmissione. Se il turno era già in
+   * corso il conto NON riparte: una ritrasmissione dello stato,
+   * per esempio dopo una riconnessione, non deve regalare tempo.
+   */
+  private refreshTurnTimer(): void {
+    const state = this.state;
+    const isHumanTurn =
+      state !== null &&
+      !isHandComplete(state) &&
+      state.toActPlayerId === this.humanId;
+
+    if (!isHumanTurn) {
+      this.clearTurnTimer();
+      return;
+    }
+
+    if (this.turnTimer !== null) return;
+
+    this.turnDeadline = Date.now() + TURN_MS;
+    this.turnTimer = setTimeout(() => {
+      this.turnTimer = null;
+      this.forceTurnTimeout();
+    }, TURN_MS);
+  }
+
+  /**
+   * Il tempo è scaduto: agisce il server.
+   *
+   * Check se non costa nulla, altrimenti fold. Un timeout non deve
+   * mai impegnare fiche che il giocatore non ha scelto di mettere.
+   * Bui e ante restano dovuti: quelli li versa il motore all'inizio
+   * della mano, non dipendono da questa decisione.
+   */
+  private forceTurnTimeout(): void {
+    if (this.closed) return;
+
+    // Gira dentro un setTimeout: un'eccezione qui non avrebbe
+    // nessuno sopra a raccoglierla e abbatterebbe il processo.
+    try {
+      const state = this.state;
+      if (!state || isHandComplete(state)) return;
+      if (state.toActPlayerId !== this.humanId) return;
+
+      const available = getAvailableActions(state);
+      if (available.length === 0) return;
+
+      const has = (type: ActionTypeT): boolean =>
+        available.some((a) => a.type === type);
+
+      const type = has(ActionType.Check)
+        ? ActionType.Check
+        : has(ActionType.Fold)
+          ? ActionType.Fold
+          : available[0]!.type;
+
+      this.clearTurnTimer();
+      this.sendError('Tempo scaduto.');
+      this.applyAndBroadcast(this.humanId, type);
+      this.scheduleBotTurn();
+    } catch (error) {
+      console.error(
+        `Timeout di turno fallito nella stanza ${this.roomId}:`,
+        error,
+      );
+    }
   }
 
   /* ── Turni dei bot ─────────────────────────────────────── */
@@ -393,6 +487,10 @@ export class Room {
   private broadcast(): void {
     if (this.closed) return;
 
+    // Il conto alla rovescia si allinea prima di trasmettere, così
+    // la vista porta con sé il tempo rimasto.
+    this.refreshTurnTimer();
+
     try {
       this.sendState(this.buildView());
     } catch (error) {
@@ -455,6 +553,10 @@ export class Room {
       players,
       availableActions: isYourTurn && state ? getAvailableActions(state) : [],
       isYourTurn,
+      turnMillisLeft:
+        this.turnDeadline !== null
+          ? Math.max(0, this.turnDeadline - Date.now())
+          : null,
       isHandComplete: complete,
       canStartNextHand: (state === null || complete) && yourStack > 0,
       isBusted: complete && yourStack <= 0,
@@ -463,4 +565,4 @@ export class Room {
       log: this.log,
     };
   }
-      }
+  }
