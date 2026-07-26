@@ -377,7 +377,7 @@ export class Room {
           seat,
           stack: engineState?.stack ?? this.stacks.get(playerId) ?? 0,
           committedThisStreet: engineState?.committedThisStreet ?? 0,
-          status: String(engineState?.status ?? ''),
+          status: engineState?.status ?? PlayerStatus.SittingOut,
           isDealer: seat === this.dealerSeat,
           isBot: playerId !== this.humanId,
           holeCards: visible ? holeCards : null,
@@ -387,6 +387,10 @@ export class Room {
 
     const isYourTurn =
       state !== null && !complete && state.toActPlayerId === this.humanId;
+
+    const yourStack = complete
+      ? (this.stacks.get(this.humanId) ?? 0)
+      : (state?.players.find((p) => p.playerId === this.humanId)?.stack ?? 0);
 
     return {
       handId: state?.handId ?? null,
@@ -400,10 +404,10 @@ export class Room {
       availableActions: isYourTurn && state ? getAvailableActions(state) : [],
       isYourTurn,
       isHandComplete: complete,
-      canStartNextHand:
-        (state === null || complete) && (this.stacks.get(this.humanId) ?? 0) > 0,
+      canStartNextHand: (state === null || complete) && yourStack > 0,
+      isBusted: complete && yourStack <= 0,
+      payouts: complete ? (state?.payouts ?? []) : [],
       blinds: this.config.blinds,
       log: this.log,
     };
   }
-                             }
