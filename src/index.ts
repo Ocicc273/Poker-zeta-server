@@ -22,6 +22,7 @@ import {
 } from './game/protocol.js';
 import {
   activeRoomCount,
+  closeAllRooms,
   closeRoom,
   configureRoomManager,
   detachSocket,
@@ -142,8 +143,16 @@ io.on('connection', (socket) => {
   });
 
   socket.on(ClientEvent.LeaveTable, async () => {
-    // Uscita volontaria: qui il giocatore ha deciso, quindi si
-    // chiude subito e le fiche rientrano senza attesa.
+    const room = getRoomByPlayer(player.userId);
+
+    if (room && !room.canLeave()) {
+      socket.emit(ServerEvent.Error, {
+        message:
+          'Non puoi lasciare il tavolo durante una mano. Passa la mano o aspetta che finisca.',
+      });
+      return;
+    }
+
     const returned = await closeRoom(player.userId);
 
     socket.emit(ServerEvent.TableClosed, {
@@ -182,3 +191,40 @@ process.on('uncaughtException', (error) => {
 process.on('unhandledRejection', (reason) => {
   console.error('Promise rifiutata senza gestore:', reason);
 });
+
+/**
+ * Spegnimento ordinato.
+ *
+ * Railway invia SIGTERM prima di sostituire il container a ogni
+ * deploy. Senza questo blocco le stanze morirebbero con il
+ * processo, lasciando sessioni aperte nel database e fiche fuori
+ * dal wallet di chi stava giocando.
+ *
+ * Non copre i crash: per quelli servirà una riconciliazione
+ * all'avvio che chiuda le sessioni rimaste aperte.
+ */
+let shuttingDown = false;
+
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  console.log(`${signal} ricevuto: chiusura tavoli e restituzione fiche…`);
+
+  io.close();
+
+  try {
+    await closeAllRooms();
+    console.log('Tavoli chiusi.');
+  } catch (error) {
+    console.error('Chiusura tavoli fallita durante lo spegnimento:', error);
+  }
+
+  httpServer.close(() => process.exit(0));
+
+  // Se qualcosa resta appeso, il riavvio non deve bloccarsi.
+  setTimeout(() => process.exit(0), 10_000).unref();
+}
+
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));
