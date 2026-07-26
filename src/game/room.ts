@@ -151,7 +151,18 @@ export class Room {
 
     return this.stacks.get(this.humanId) ?? 0;
   }
-
+  
+/**
+   * Ritrasmette lo stato corrente.
+   *
+   * Serve a un client che si riattacca a una partita già in corso:
+   * ha perso tutti gli aggiornamenti mentre era via e deve
+   * ricevere la fotografia di adesso, non ricominciare.
+   */
+  resendState(): void {
+    this.broadcast();
+  }
+  
   /* ── Mani ──────────────────────────────────────────────── */
 
   startNextHand(): void {
