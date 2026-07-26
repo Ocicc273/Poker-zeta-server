@@ -175,6 +175,26 @@ export class Room {
     this.broadcast();
   }
 
+  /**
+   * Se il giocatore può alzarsi adesso.
+   *
+   * Con fiche impegnate in una mano in corso non si esce: sarebbe
+   * un modo per annullare una puntata perdente. Dopo un fold, o
+   * fra una mano e l'altra, è libero di andarsene.
+   *
+   * Vale anche per chi è all-in: le sue fiche sono nel piatto e
+   * potrebbe ancora vincerlo, quindi uscire lo danneggerebbe.
+   */
+  canLeave(): boolean {
+    const state = this.state;
+    if (state === null || isHandComplete(state)) return true;
+
+    const inHand = state.players.find((p) => p.playerId === this.humanId);
+    if (!inHand) return true;
+
+    return inHand.status === PlayerStatus.Folded;
+  }
+
   /* ── Mani ──────────────────────────────────────────────── */
 
   startNextHand(): void {
