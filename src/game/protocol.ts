@@ -2,9 +2,9 @@
  * Poker Zeta — Contratto di rete fra client e Match Server
  *
  * Questo file è l'unico punto in cui sono definiti i nomi degli
- * eventi e la forma dei messaggi. Una copia identica vivrà nel
- * client: se le due divergono, il tavolo smette di funzionare in
- * modi difficili da diagnosticare.
+ * eventi e la forma dei messaggi. Una copia identica vive nel
+ * client in src/lib/table-protocol.ts: se le due divergono, il
+ * tavolo smette di funzionare in modi difficili da diagnosticare.
  */
 
 import type {
@@ -12,6 +12,7 @@ import type {
   AvailableAction,
   Card,
   PlayerId,
+  PlayerStatus,
   Street,
 } from '../engine/index.js';
 
@@ -51,12 +52,17 @@ export interface ActionLogEntry {
   street: Street;
 }
 
+export interface PayoutView {
+  playerId: PlayerId;
+  amount: number;
+}
+
 /**
  * Come il client vede un giocatore al tavolo.
  *
  * holeCards è null quando le carte non sono visibili a chi riceve
- * questa vista. holeCardCount resta valorizzato perché l'interfaccia
- * deve comunque disegnare il dorso delle carte.
+ * questa vista. holeCardCount resta valorizzato perché
+ * l'interfaccia deve comunque disegnare il dorso delle carte.
  */
 export interface PlayerView {
   playerId: PlayerId;
@@ -64,7 +70,7 @@ export interface PlayerView {
   seat: number;
   stack: number;
   committedThisStreet: number;
-  status: string;
+  status: PlayerStatus;
   isDealer: boolean;
   isBot: boolean;
   holeCards: readonly Card[] | null;
@@ -90,6 +96,8 @@ export interface TableView {
   isYourTurn: boolean;
   isHandComplete: boolean;
   canStartNextHand: boolean;
+  isBusted: boolean;
+  payouts: readonly PayoutView[];
   blinds: { smallBlind: number; bigBlind: number; ante: number };
   log: readonly ActionLogEntry[];
 }
