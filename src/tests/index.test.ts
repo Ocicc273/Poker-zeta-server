@@ -11,3 +11,4 @@
 
 import './bot.test.js';
 import './table-config.test.js';
+import './twister.test.js';
