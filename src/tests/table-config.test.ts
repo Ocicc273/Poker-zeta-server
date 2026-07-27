@@ -179,15 +179,13 @@ test('tavolo: i posti sono tre', () => {
 // se cambiano qui va cambiato anche lì.
 const ENTRY_MINS = [200, 1_001, 5_001, 20_001, 100_001];
 
-test('ogni minimo d'ingresso risolve il suo livello', () => {
+test("ogni minimo d'ingresso risolve il suo livello", () => {
   ENTRY_MINS.forEach((buyIn, index) => {
     assert.equal(resolveStakeLevel(buyIn).level, index + 1);
   });
 });
 
-test('il minimo nominale ricade sul livello sotto', () => {
-  // 1.000, 4.000, 20.000, 100.000: il fondo dichiarato
-  // dei livelli 2-5 appartiene al livello precedente.
+test("il minimo nominale ricade sul livello sotto", () => {
   HOLDEM_STAKES.slice(1).forEach((level, index) => {
     assert.equal(
       resolveStakeLevel(level.minBuyIn).level,
