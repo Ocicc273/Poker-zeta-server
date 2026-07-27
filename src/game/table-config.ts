@@ -1,71 +1,85 @@
 /**
  * Poker Zeta — Derivazione della configurazione del tavolo
+ * Riferimento: ECON-001 §5
  *
  * Il buy-in arriva dal client, quindi non è affidabile: qui viene
- * validato e trasformato in bui e stack. Un client modificato che
- * chiede un buy-in da dieci milioni deve trovare un muro.
+ * ricondotto a un livello di stake esistente e vincolato al suo
+ * intervallo. Un client modificato che chiede un buy-in da dieci
+ * milioni deve trovare un muro, non un tavolo su misura.
+ *
+ * Le firme sono rimaste quelle di prima perché room.ts le usa:
+ * cambia il modo in cui i bui vengono determinati, non il contratto.
  */
 
 import type { TableConfig } from '../engine/index.js';
-
-/** Un buy-in standard vale 40 big blind (stessa regola del client). */
-const BIG_BLINDS_PER_BUYIN = 40;
-
-/** Limiti di sicurezza, non regole di gioco. */
-const MIN_BUY_IN = 100;
-const MAX_BUY_IN = 50_000;
+import {
+  HIGHEST_LEVEL,
+  LOWEST_LEVEL,
+  resolveStakeLevel,
+  type StakeLevel,
+} from './stakes.js';
 
 /** Posti al tavolo: 1 umano + 2 bot. */
 export const MAX_SEATS = 3;
 
-const NICE_VALUES = [
-  1, 2, 5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000,
-] as const;
+/** Limiti assoluti, ricavati dalla scala invece di essere ripetuti. */
+export const MIN_BUY_IN = LOWEST_LEVEL.minBuyIn;
+export const MAX_BUY_IN = HIGHEST_LEVEL.maxBuyIn;
 
-function roundToNiceValue(value: number): number {
-  let closest: number = NICE_VALUES[0];
-  let smallestGap = Math.abs(value - closest);
+/**
+ * Riporta un buy-in arbitrario dentro i limiti della scala.
+ *
+ * Nota: qui NON viene verificato che il giocatore possieda davvero
+ * quelle Z-Coins. Quel controllo vive nella funzione SQL
+ * open_table_session, che rifiuta se il saldo non basta.
+ */
+export function sanitizeBuyIn(raw: unknown): number {
+  const value =
+    typeof raw === 'number' && Number.isFinite(raw) ? raw : MIN_BUY_IN;
 
-  for (const step of NICE_VALUES) {
-    const gap = Math.abs(value - step);
-    if (gap < smallestGap) {
-      smallestGap = gap;
-      closest = step;
-    }
-  }
-  return closest;
+  const intero = Math.floor(value);
+  const dentroScala = Math.min(MAX_BUY_IN, Math.max(MIN_BUY_IN, intero));
+
+  // Il buy-in va vincolato anche all'intervallo del proprio livello:
+  // 1.500 appartiene al livello 2, che parte da 1.000, quindi resta
+  // 1.500; ma 250 appartiene al livello 1 e non può salire sopra
+  // 1.000 solo perché la scala nel complesso arriva più in alto.
+  const level = resolveStakeLevel(dentroScala);
+
+  return Math.min(level.maxBuyIn, Math.max(level.minBuyIn, dentroScala));
+}
+
+export interface DerivedTable {
+  config: TableConfig;
+  startingStack: number;
+  stake: StakeLevel;
 }
 
 /**
- * Riporta un buy-in arbitrario dentro i limiti consentiti.
+ * Costruisce la configurazione del tavolo per un buy-in già
+ * normalizzato.
  *
- * Nota: qui NON viene ancora verificato che il giocatore possieda
- * davvero quelle Z-Coins. Il controllo sul wallet è un pezzo a sé
- * e va fatto prima di considerare reale l'economia del gioco.
+ * I bui NON dipendono dal buy-in: appartengono al livello. È la
+ * differenza fra "scelgo un tavolo e decido quanto portarci" e
+ * "il mio stack decide che tavolo è", che era il modello sbagliato.
  */
-export function sanitizeBuyIn(raw: unknown): number {
-  const value = typeof raw === 'number' && Number.isFinite(raw) ? raw : MIN_BUY_IN;
-  const clamped = Math.min(MAX_BUY_IN, Math.max(MIN_BUY_IN, Math.floor(value)));
-  return clamped;
-}
-
-export function deriveTableConfig(buyIn: number): {
-  config: TableConfig;
-  startingStack: number;
-} {
-  const rawBigBlind = Math.max(2, Math.round(buyIn / BIG_BLINDS_PER_BUYIN));
-  const bigBlind = roundToNiceValue(rawBigBlind);
+export function deriveTableConfig(buyIn: number): DerivedTable {
+  const stake = resolveStakeLevel(buyIn);
 
   return {
     config: {
       maxSeats: MAX_SEATS,
       blinds: {
-        smallBlind: Math.max(1, Math.floor(bigBlind / 2)),
-        bigBlind,
+        smallBlind: stake.smallBlind,
+        bigBlind: stake.bigBlind,
         ante: 0,
       },
       structure: 'no-limit',
     },
-    startingStack: buyIn,
+    startingStack: Math.min(
+      stake.maxBuyIn,
+      Math.max(stake.minBuyIn, Math.floor(buyIn)),
+    ),
+    stake,
   };
 }
