@@ -96,3 +96,35 @@ export function applyRake(
 
   return { pots: remainingPots, taken };
 }
+/**
+ * Parte non pagata di una puntata. Se un solo giocatore
+ * ha impegnato più di tutti, la differenza rispetto al
+ * secondo è sua e torna a lui: non è piatto conteso e
+ * non si rastrella mai.
+ */
+export function uncalledAmount(
+  amounts: readonly number[]
+): number {
+  const positive = amounts.filter(
+    (amount) => Number.isFinite(amount) && amount > 0
+  );
+
+  // Un solo contributore: tutto suo, niente da rastrellare.
+  if (positive.length < 2) return positive[0] ?? 0;
+
+  const sorted = [...positive].sort((a, b) => b - a);
+  return sorted[0]! - sorted[1]!;
+}
+
+/** Totale meno la parte non pagata. */
+export function rakeableTotal(
+  amounts: readonly number[]
+): number {
+  const total = amounts.reduce(
+    (sum, amount) =>
+      sum + (Number.isFinite(amount) && amount > 0 ? amount : 0),
+    0
+  );
+
+  return Math.max(0, total - uncalledAmount(amounts));
+}
