@@ -10,9 +10,15 @@
  */
 
 import type { Server } from 'socket.io';
-import { Room, type RoomOptions } from './room.js';
+import { BOT_COUNT, Room, type RoomOptions } from './room.js';
 import { sanitizeBuyIn } from './table-config.js';
-import { closeTableSession, openTableSession } from '../wallet/table-session.js';
+import {
+  closeTableSession,
+  drawFromBotPool,
+  openTableSession,
+  returnToBotPool,
+  WalletError,
+} from '../wallet/table-session.js';
 import { ServerEvent } from './protocol.js';
 import type { PlayerId } from '../engine/index.js';
 
@@ -101,11 +107,43 @@ export async function joinRoom(
   // esistere.
   const sessionId = await openTableSession(playerId, buyIn);
 
+  // Le fiche dei bot escono da un pool finito. Se il pool non
+  // basta, il tavolo non si apre e il buy-in torna indietro:
+  // meglio negare l'ingresso che sedere avversari senza fiche.
+  let drawn = 0;
+  try {
+    drawn = await drawFromBotPool(buyIn * BOT_COUNT);
+  } catch (error) {
+    await closeTableSession(sessionId, buyIn).catch(() => undefined);
+    throw error;
+  }
+
+  const perBot = Math.floor(drawn / BOT_COUNT);
+
+  if (perBot < 1) {
+    // Si restituisce quel poco che era stato prelevato, e si
+    // rimborsa il buy-in chiudendo subito la sessione.
+    await returnToBotPool(drawn, 'table_refused').catch(() => undefined);
+    await closeTableSession(sessionId, buyIn).catch(() => undefined);
+    throw new WalletError(
+      'Nessun tavolo disponibile in questo momento. Riprova più tardi.',
+    );
+  }
+
+  // L'eventuale resto della divisione rientra subito: tenerlo
+  // fuori dal pool senza che nessuno lo usi sarebbe una perdita
+  // silenziosa.
+  const resto = drawn - perBot * BOT_COUNT;
+  if (resto > 0) {
+    await returnToBotPool(resto, 'table_remainder').catch(() => undefined);
+  }
+
   const options: RoomOptions = {
     roomId: `room-${playerId}`,
     humanPlayerId: playerId,
     humanName: playerName,
     buyIn,
+    botStacks: Array.from({ length: BOT_COUNT }, () => perBot),
     sendState: (view) => emitToPlayer(playerId, ServerEvent.TableState, view),
     sendError: (message) =>
       emitToPlayer(playerId, ServerEvent.Error, { message }),
@@ -171,7 +209,18 @@ export async function closeRoom(playerId: PlayerId): Promise<number | null> {
 
   const finalStack = entry.room.humanStack();
   entry.room.close();
-
+// Le fiche rimaste ai bot tornano nel pool. Va fatto anche se il
+  // riaccredito del giocatore fallisce: sono due contabilità
+  // separate e una non deve trascinare l'altra.
+  const botTotal = entry.room.botStacksTotal();
+  if (botTotal > 0) {
+    await returnToBotPool(botTotal).catch((error) => {
+      console.error(
+        `Rientro nel bankroll bot fallito (${botTotal} fiche):`,
+        error,
+      );
+    });
+  }
   try {
     const returned = await closeTableSession(entry.sessionId, finalStack);
     console.log(
