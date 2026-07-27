@@ -13,6 +13,7 @@ import {
   RAKE_CAP_BIG_BLINDS,
   RAKE_PERCENT,
   applyRake,
+  chargeRake,
   computeRake,
   rakeCap,
 } from '../game/rake.js';
