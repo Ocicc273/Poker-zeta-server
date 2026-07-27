@@ -52,6 +52,9 @@ const BOTS: readonly BotDefinition[] = [
   { playerId: 'bot-2', name: 'Don Duck', profile: 'loose', seat: 2 },
 ];
 
+/** Quanti avversari siedono al tavolo. Serve al gestore delle stanze. */
+export const BOT_COUNT = BOTS.length;
+
 /**
  * Pausa prima di ogni azione dei bot.
  *
@@ -78,6 +81,14 @@ export interface RoomOptions {
   humanPlayerId: PlayerId;
   humanName: string;
   buyIn: unknown;
+  /**
+   * Stack iniziale di ogni bot, nello stesso ordine di BOTS.
+   *
+   * Arrivano dall'esterno perché provengono dal bankroll, che è
+   * finito: inventarli qui dentro era il modo in cui i tavoli
+   * contro bot stampavano Z-Coins.
+   */
+  botStacks: readonly number[];
   /** Invia la vista aggiornata al giocatore umano. */
   sendState: (view: TableView) => void;
   /** Comunica un errore senza interrompere la partita. */
@@ -122,11 +133,12 @@ export class Room {
     this.seats.set(this.humanId, 0);
     this.stacks.set(this.humanId, this.startingStack);
 
-    for (const bot of BOTS) {
+    
+    BOTS.forEach((bot, index) => {
       this.names.set(bot.playerId, bot.name);
       this.seats.set(bot.playerId, bot.seat);
-      this.stacks.set(bot.playerId, this.startingStack);
-    }
+      this.stacks.set(bot.playerId, options.botStacks[index] ?? 0);
+    });
   }
 
   /* ── Ciclo di vita ─────────────────────────────────────── */
@@ -163,7 +175,28 @@ export class Room {
 
     return this.stacks.get(this.humanId) ?? 0;
   }
+/**
+   * Fiche complessive ancora in mano ai bot.
+   *
+   * Serve a restituirle al bankroll quando il tavolo chiude. Come
+   * per il giocatore umano, quelle già versate nel piatto non
+   * contano: appartengono alla mano in corso, non al pool.
+   */
+  botStacksTotal(): number {
+    const state = this.state;
+    let total = 0;
 
+    for (const bot of BOTS) {
+      if (state !== null && !isHandComplete(state)) {
+        const inHand = state.players.find((p) => p.playerId === bot.playerId);
+        total += inHand ? inHand.stack : (this.stacks.get(bot.playerId) ?? 0);
+      } else {
+        total += this.stacks.get(bot.playerId) ?? 0;
+      }
+    }
+
+    return total;
+  }
   /**
    * Ritrasmette lo stato corrente.
    *
