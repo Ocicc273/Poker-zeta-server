@@ -128,3 +128,57 @@ export function rakeableTotal(
 
   return Math.max(0, total - uncalledAmount(amounts));
 }
+export interface RakeShare {
+  playerId: string;
+  amount: number;
+}
+
+/**
+ * Ripartisce il rake fra i vincitori, in proporzione a
+ * quanto ciascuno ha vinto. Nessuno paga più di quanto
+ * ha incassato, e la somma trattenuta non supera mai il
+ * totale distribuito.
+ */
+export function chargeRake(
+  winnings: readonly RakeShare[],
+  rake: number
+): { charges: RakeShare[]; taken: number } {
+  const positive = winnings.filter(
+    (entry) => Number.isFinite(entry.amount) && entry.amount > 0
+  );
+
+  const total = positive.reduce((sum, e) => sum + e.amount, 0);
+  const target = Math.min(Math.max(0, Math.floor(rake)), total);
+
+  if (target === 0) return { charges: [], taken: 0 };
+
+  const charges = positive.map((entry) => ({
+    playerId: entry.playerId,
+    amount: Math.floor((target * entry.amount) / total),
+  }));
+
+  let taken = charges.reduce((sum, c) => sum + c.amount, 0);
+
+  // Il resto della divisione lo pagano i vincitori più
+  // grossi, una fiche alla volta.
+  const order = charges
+    .map((_, index) => index)
+    .sort((a, b) => positive[b]!.amount - positive[a]!.amount);
+
+  let step = 0;
+  const guard = order.length * (target + 1);
+
+  while (taken < target && step < guard) {
+    const slot = order[step % order.length]!;
+    if (charges[slot]!.amount < positive[slot]!.amount) {
+      charges[slot]!.amount += 1;
+      taken += 1;
+    }
+    step += 1;
+  }
+
+  return {
+    charges: charges.filter((c) => c.amount > 0),
+    taken,
+  };
+}
