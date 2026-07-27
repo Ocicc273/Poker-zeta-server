@@ -100,3 +100,55 @@ export async function closeTableSession(
 
   return Number(result.returned ?? 0);
 }
+/**
+ * Preleva fiche dal bankroll dei bot.
+ *
+ * Può restituire meno del richiesto: il pool è finito, ed è
+ * proprio questo che impedisce ai tavoli contro bot di creare
+ * Z-Coins dal nulla.
+ */
+export async function drawFromBotPool(amount: number): Promise<number> {
+  const result = await callWallet<{ drawn?: number }>({
+    action: 'bot-draw',
+    amount: Math.max(0, Math.floor(amount)),
+  });
+  return Number(result.drawn ?? 0);
+}
+
+/** Restituisce fiche al bankroll dei bot. Torna il saldo del pool. */
+export async function returnToBotPool(
+  amount: number,
+  reason = 'table_close',
+): Promise<number> {
+  const result = await callWallet<{ balance?: number }>({
+    action: 'bot-return',
+    amount: Math.max(0, Math.floor(amount)),
+    reason,
+  });
+  return Number(result.balance ?? 0);
+}
+
+/**
+ * Fondo di ripartenza. Restituisce quanto è stato erogato, zero se
+ * il giocatore non ne ha diritto — che non è un errore.
+ */
+export async function claimRestartFund(userId: string): Promise<number> {
+  const result = await callWallet<{ granted?: number }>({
+    action: 'restart-fund',
+    userId,
+  });
+  return Number(result.granted ?? 0);
+}
+
+/** Registra il rake prelevato in una sessione. Solo misura. */
+export async function recordRake(
+  sessionId: string,
+  amount: number,
+): Promise<number> {
+  const result = await callWallet<{ rakeTotal?: number }>({
+    action: 'record-rake',
+    sessionId,
+    amount: Math.max(0, Math.floor(amount)),
+  });
+  return Number(result.rakeTotal ?? 0);
+}
