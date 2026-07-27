@@ -172,3 +172,26 @@ test('tavolo: il livello viene restituito insieme alla configurazione', () => {
 test('tavolo: i posti sono tre', () => {
   assert.equal(deriveTableConfig(1_000).config.maxSeats, 3);
 });
+
+// Minimi d'ingresso REALI: sotto queste cifre la
+// risoluzione ricade sul livello precedente. La
+// schermata Play del client li ha duplicati, quindi
+// se cambiano qui va cambiato anche lì.
+const ENTRY_MINS = [200, 1_001, 5_001, 20_001, 100_001];
+
+test('ogni minimo d'ingresso risolve il suo livello', () => {
+  ENTRY_MINS.forEach((buyIn, index) => {
+    assert.equal(resolveStakeLevel(buyIn).level, index + 1);
+  });
+});
+
+test('il minimo nominale ricade sul livello sotto', () => {
+  // 1.000, 4.000, 20.000, 100.000: il fondo dichiarato
+  // dei livelli 2-5 appartiene al livello precedente.
+  HOLDEM_STAKES.slice(1).forEach((level, index) => {
+    assert.equal(
+      resolveStakeLevel(level.minBuyIn).level,
+      index + 1
+    );
+  });
+});
