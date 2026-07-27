@@ -122,3 +122,40 @@ test("il rake è davvero uno scarico: su un piatto conteso al flop è > 0", () =
   assert.ok(computeRake({ ...contestedHand, pot: 20 }) > 0);
   assert.ok(computeRake({ ...contestedHand, pot: 1_000 }) > 0);
 });
+test('chargeRake divide in proporzione alle vincite', () => {
+  const { charges, taken } = chargeRake(
+    [
+      { playerId: 'a', amount: 900 },
+      { playerId: 'b', amount: 100 },
+    ],
+    30
+  );
+  assert.equal(taken, 30);
+  assert.deepEqual(charges, [
+    { playerId: 'a', amount: 27 },
+    { playerId: 'b', amount: 3 },
+  ]);
+});
+
+test('chargeRake non toglie a nessuno più di quanto ha vinto', () => {
+  const { charges, taken } = chargeRake(
+    [{ playerId: 'a', amount: 12 }],
+    30
+  );
+  assert.equal(taken, 12);
+  assert.equal(charges[0]!.amount, 12);
+});
+
+test('chargeRake conserva le fiche', () => {
+  const { charges, taken } = chargeRake(
+    [
+      { playerId: 'a', amount: 333 },
+      { playerId: 'b', amount: 333 },
+      { playerId: 'c', amount: 334 },
+    ],
+    31
+  );
+  const sum = charges.reduce((s, c) => s + c.amount, 0);
+  assert.equal(sum, taken);
+  assert.equal(taken, 31);
+});
