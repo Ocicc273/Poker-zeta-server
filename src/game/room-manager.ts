@@ -16,6 +16,7 @@ import {
   closeTableSession,
   drawFromBotPool,
   openTableSession,
+  recordRake,
   returnToBotPool,
   WalletError,
 } from '../wallet/table-session.js';
@@ -217,6 +218,21 @@ export async function closeRoom(playerId: PlayerId): Promise<number | null> {
     await returnToBotPool(botTotal).catch((error) => {
       console.error(
         `Rientro nel bankroll bot fallito (${botTotal} fiche):`,
+        error,
+      );
+    });
+  }
+  // Il rake va scritto sulla sessione prima di chiuderla:
+  // dopo la chiusura quella riga non è più la corrente e il
+  // totale si perderebbe. Un fallimento qui non blocca il
+  // riaccredito — le fiche del rake sono già uscite dagli
+  // stack, questa è solo la registrazione contabile.
+  const rake = entry.room.rakeTotal();
+  if (rake > 0) {
+    await recordRake(entry.sessionId, rake).catch((error) => {
+      console.error(
+        `Registrazione del rake fallita ` +
+          `(${rake} fiche, sessione ${entry.sessionId}):`,
         error,
       );
     });
