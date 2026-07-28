@@ -32,6 +32,12 @@ import {
   MAX_SEATS,
 } from './table-config.js';
 
+import {
+  chargeRake,
+  computeRake,
+  rakeableTotal,
+} from './rake.js';
+
 import type {
   ActionLogEntry,
   PlayerView,
@@ -117,6 +123,7 @@ export class Room {
   private turnTimer: ReturnType<typeof setTimeout> | null = null;
   private turnDeadline: number | null = null;
   private closed = false;
+  private rakeCollected = 0;na8
 
   constructor(options: RoomOptions) {
     this.roomId = options.roomId;
@@ -196,6 +203,60 @@ export class Room {
     }
 
     return total;
+
+    /** Rake trattenuto da questa stanza finora. */
+  rakeTotal(): number {
+    return this.rakeCollected;
+  }
+
+  /**
+   * Trattiene il rake su una mano appena conclusa e
+   * restituisce lo stato già al netto.
+   *
+   * Si decurtano sia gli stack sia i payouts: la vista
+   * mostra al giocatore quello che ha davvero incassato,
+   * non la cifra lorda.
+   */
+  private settleHand(next: HandState): HandState {
+    const amounts = next.players.map((p) => p.committedTotal);
+
+    const rake = computeRake({
+      pot: rakeableTotal(amounts),
+      bigBlind: this.config.blinds.bigBlind,
+      sawFlop: next.communityCards.length >= 3,
+      contested: amounts.filter((a) => a > 0).length >= 2,
+    });
+
+    if (rake <= 0) return next;
+
+    const { charges, taken } = chargeRake(
+      next.payouts.map((p) => ({
+        playerId: p.playerId,
+        amount: p.amount,
+      })),
+      rake,
+    );
+
+    if (taken <= 0) return next;
+
+    const charged = new Map(
+      charges.map((c) => [c.playerId, c.amount]),
+    );
+
+    const players = next.players.map((p) => {
+      const fee = charged.get(p.playerId) ?? 0;
+      return fee > 0 ? { ...p, stack: p.stack - fee } : p;
+    });
+
+    const payouts = next.payouts.map((p) => {
+      const fee = charged.get(p.playerId) ?? 0;
+      return fee > 0 ? { ...p, amount: p.amount - fee } : p;
+    });
+
+    this.rakeCollected += taken;
+
+    return { ...next, players, payouts };
+  }
   }
   /**
    * Ritrasmette lo stato corrente.
@@ -325,9 +386,13 @@ export class Room {
 
     this.appendLog(playerId, type, amount, current.street);
 
-    if (type === ActionType.Fold) {
+   if (type === ActionType.Fold) {
       // Serve a decidere chi mostra le carte allo showdown.
       this.folded.add(playerId);
+    }
+
+    if (isHandComplete(next)) {
+      next = this.settleHand(next);
     }
 
     this.state = next;
