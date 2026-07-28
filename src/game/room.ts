@@ -123,7 +123,15 @@ export class Room {
   private turnTimer: ReturnType<typeof setTimeout> | null = null;
   private turnDeadline: number | null = null;
   private closed = false;
-  private rakeCollected = 0;na8
+
+  /**
+   * Rake trattenuto da questa stanza dall'apertura.
+   *
+   * Non è un saldo di gioco: sono fiche uscite dalla circolazione,
+   * che il gestore delle stanze registra sulla sessione alla
+   * chiusura del tavolo.
+   */
+  private rakeCollected = 0;
 
   constructor(options: RoomOptions) {
     this.roomId = options.roomId;
@@ -140,7 +148,6 @@ export class Room {
     this.seats.set(this.humanId, 0);
     this.stacks.set(this.humanId, this.startingStack);
 
-    
     BOTS.forEach((bot, index) => {
       this.names.set(bot.playerId, bot.name);
       this.seats.set(bot.playerId, bot.seat);
@@ -182,7 +189,8 @@ export class Room {
 
     return this.stacks.get(this.humanId) ?? 0;
   }
-/**
+
+  /**
    * Fiche complessive ancora in mano ai bot.
    *
    * Serve a restituirle al bankroll quando il tavolo chiude. Come
@@ -203,19 +211,25 @@ export class Room {
     }
 
     return total;
+  }
 
-    /** Rake trattenuto da questa stanza finora. */
+  /* ── Rake ──────────────────────────────────────────────── */
+
+  /** Rake trattenuto da questa stanza finora. */
   rakeTotal(): number {
     return this.rakeCollected;
   }
 
   /**
-   * Trattiene il rake su una mano appena conclusa e
-   * restituisce lo stato già al netto.
+   * Trattiene il rake su una mano appena conclusa e restituisce lo
+   * stato già al netto.
    *
-   * Si decurtano sia gli stack sia i payouts: la vista
-   * mostra al giocatore quello che ha davvero incassato,
-   * non la cifra lorda.
+   * Si decurtano sia gli stack sia i payouts: la vista mostra al
+   * giocatore quello che ha davvero incassato, non la cifra lorda.
+   *
+   * Il piatto su cui si calcola è quello CONTESO: la parte non
+   * pagata di una puntata torna a chi l'ha fatta e non si
+   * rastrella mai.
    */
   private settleHand(next: HandState): HandState {
     const amounts = next.players.map((p) => p.committedTotal);
@@ -239,9 +253,7 @@ export class Room {
 
     if (taken <= 0) return next;
 
-    const charged = new Map(
-      charges.map((c) => [c.playerId, c.amount]),
-    );
+    const charged = new Map(charges.map((c) => [c.playerId, c.amount]));
 
     const players = next.players.map((p) => {
       const fee = charged.get(p.playerId) ?? 0;
@@ -257,7 +269,7 @@ export class Room {
 
     return { ...next, players, payouts };
   }
-  }
+
   /**
    * Ritrasmette lo stato corrente.
    *
@@ -386,11 +398,14 @@ export class Room {
 
     this.appendLog(playerId, type, amount, current.street);
 
-   if (type === ActionType.Fold) {
+    if (type === ActionType.Fold) {
       // Serve a decidere chi mostra le carte allo showdown.
       this.folded.add(playerId);
     }
 
+    // Il rake si trattiene PRIMA che gli stack finiscano in
+    // this.stacks: quello che il giocatore porta alla mano
+    // successiva, e poi nel wallet, è già netto.
     if (isHandComplete(next)) {
       next = this.settleHand(next);
     }
@@ -683,4 +698,4 @@ export class Room {
       log: this.log,
     };
   }
-  }
+}
