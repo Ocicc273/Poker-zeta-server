@@ -37,3 +37,13 @@ export const env = {
    */
   MATCH_SERVER_SECRET: required('MATCH_SERVER_SECRET'),
 } as const;
+/**
+   * Chiave della rotta di diagnostica /bot-status.
+   *
+   * FACOLTATIVA di proposito: se manca, la rotta semplicemente
+   * non esiste. Renderla obbligatoria significherebbe che una
+   * dimenticanza nelle Variables impedisce l'avvio del server,
+   * e una comodità di diagnostica non deve poter fermare i
+   * tavoli.
+   */
+  STATUS_KEY: process.env.STATUS_KEY?.trim() ?? '',
