@@ -23,6 +23,7 @@ export const ClientEvent = {
   Action: 'client:action',
   NextHand: 'client:next-hand',
   LeaveTable: 'client:leave-table',
+  ClaimRestartFund: 'client:claim-restart-fund',
 } as const;
 
 export const ServerEvent = {
@@ -30,8 +31,8 @@ export const ServerEvent = {
   TableState: 'server:table-state',
   Error: 'server:error',
   TableClosed: 'server:table-closed',
+  RestartFund: 'server:restart-fund',
 } as const;
-
 /* ── Messaggi dal client ─────────────────────────────────── */
 
 export interface JoinTablePayload {
@@ -110,4 +111,17 @@ export interface ServerErrorPayload {
 
 export interface TableClosedPayload {
   reason: string;
+}
+
+/**
+ * Esito della richiesta del fondo di ripartenza.
+ *
+ * granted a zero NON è un errore: significa che il giocatore non
+ * ne ha diritto adesso, perché l'ha già ricevuto nelle ultime 24
+ * ore o perché il saldo è sopra la soglia. Il messaggio serve al
+ * client per dirlo senza doverlo dedurre.
+ */
+export interface RestartFundPayload {
+  granted: number;
+  message: string;
 }
