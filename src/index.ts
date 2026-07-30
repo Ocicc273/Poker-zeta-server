@@ -209,16 +209,25 @@ async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
 
-  console.log(`${signal} ricevuto: chiusura tavoli e restituzione fiche…`);
+  console.log(
+    `${signal} ricevuto: ${activeRoomCount()} tavoli da chiudere, ` +
+      `restituzione fiche…`,
+  );
 
-  io.close();
+  // Le chiamate di rete partono subito: con una finestra di
+  // grazia stretta, disconnettere prima i client sarebbe
+  // tempo rubato al rientro delle fiche.
+  const startedAt = Date.now();
 
   try {
     await closeAllRooms();
-    console.log('Tavoli chiusi.');
+    console.log(`Tavoli chiusi in ${Date.now() - startedAt} ms.`);
   } catch (error) {
     console.error('Chiusura tavoli fallita durante lo spegnimento:', error);
   }
+
+  io.close();
+  
 
   httpServer.close(() => process.exit(0));
 
