@@ -9,7 +9,7 @@
   "scripts": {
     "test": "tsx src/tests/index.test.ts",
     "build": "tsc --noEmit && tsx src/tests/index.test.ts",
-    "start": "tsx src/index.ts",
+    "start": "node --import tsx src/index.ts",
     "dev": "tsx watch src/index.ts"
   },
   "dependencies": {
