@@ -152,3 +152,34 @@ export async function recordRake(
   });
   return Number(result.rakeTotal ?? 0);
 }
+/** Un movimento del bankroll dei bot, come lo restituisce il database. */
+export interface BotBankrollMovement {
+  id: number;
+  amount: number;
+  reason: string;
+  created_at: string;
+}
+
+export interface BotBankrollStatus {
+  balance: number;
+  updatedAt: string | null;
+  movements: readonly BotBankrollMovement[];
+}
+
+/**
+ * Fotografia del bankroll dei bot: saldo e ultimi movimenti.
+ * Sola lettura — nessuna fiche si muove.
+ */
+export async function botStatus(): Promise<BotBankrollStatus> {
+  const result = await callWallet<{
+    balance?: number;
+    updated_at?: string;
+    movements?: BotBankrollMovement[];
+  }>({ action: 'bot-status' });
+
+  return {
+    balance: Number(result.balance ?? 0),
+    updatedAt: result.updated_at ?? null,
+    movements: result.movements ?? [],
+  };
+}
