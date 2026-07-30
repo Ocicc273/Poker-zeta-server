@@ -1,3 +1,3 @@
 # Poker-zeta-server 
 
-Auth attiva. .,
+Auth attiva.
