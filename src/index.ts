@@ -13,7 +13,11 @@ import { Server } from 'socket.io';
 import { env } from './config/env.js';
 import { verifyAccessToken } from './auth/verify-token.js';
 import * as engine from './engine/index.js';
-import { botStatus,WalletError } from './wallet/table-session.js';
+import {
+  botStatus,
+  claimRestartFund,
+  WalletError,
+} from './wallet/table-session.js';
 import {
   ClientEvent,
   ServerEvent,
@@ -183,6 +187,35 @@ io.on('connection', (socket) => {
           ? 'Hai lasciato il tavolo.'
           : `Hai lasciato il tavolo con ${returned.toLocaleString('it-IT')} Z-Coins.`,
     });
+  });
+
+  socket.on(ClientEvent.ClaimRestartFund, async () => {
+    try {
+      const granted = await claimRestartFund(player.userId);
+
+      socket.emit(ServerEvent.RestartFund, {
+        granted,
+        message:
+          granted > 0
+            ? `Fondo di ripartenza: ${granted.toLocaleString('it-IT')} ` +
+              `Z-Coins accreditati. Lascia il tavolo e rientra per ` +
+              `giocarli.`
+            : `Fondo non disponibile adesso: si riceve una volta ` +
+              `ogni 24 ore, e solo con il saldo sotto la soglia.`,
+      });
+
+      console.log(`Fondo di ripartenza per ${label}: ${granted}`);
+    } catch (error) {
+      // Un fallimento qui non è mai colpa del giocatore: o il
+      // servizio non risponde, o la richiesta è malformata.
+      const message =
+        error instanceof WalletError
+          ? error.message
+          : 'Impossibile richiedere il fondo adesso.';
+
+      console.error(`Fondo di ripartenza fallito per ${label}:`, error);
+      socket.emit(ServerEvent.Error, { message });
+    }
   });
 
   socket.on('disconnect', (reason) => {
