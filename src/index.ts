@@ -13,7 +13,7 @@ import { Server } from 'socket.io';
 import { env } from './config/env.js';
 import { verifyAccessToken } from './auth/verify-token.js';
 import * as engine from './engine/index.js';
-import { WalletError } from './wallet/table-session.js';
+import { botStatus,WalletError } from './wallet/table-session.js';
 import {
   ClientEvent,
   ServerEvent,
@@ -42,6 +42,28 @@ if (engineExports === 0) {
 }
 
 const httpServer = createServer((req, res) => {
+  if (req.url?.startsWith('/bot-status')) {
+    const url = new URL(req.url, `http://${req.headers.host ?? 'x'}`);
+
+    // Chiave assente o sbagliata: 404, non 401. Una rotta di
+    // diagnostica non deve nemmeno rivelare di esistere.
+    if (env.STATUS_KEY === '' || url.searchParams.get('key') !== env.STATUS_KEY) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+
+    void botStatus()
+      .then((status) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(status, null, 2));
+      })
+      .catch((error) => {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: (error as Error).message }));
+      });
+    return;
+  }
   if (req.url === '/health' || req.url === '/') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
