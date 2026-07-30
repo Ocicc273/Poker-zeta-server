@@ -46,4 +46,4 @@ export const env = {
    * e una comodità di diagnostica non deve poter fermare i
    * tavoli.
    */
-  STATUS_KEY: process.env.STATUS_KEY?.trim() ?? '',
+  STATUS_KEY: (process.env.STATUS_KEY ?? String()).trim(),
