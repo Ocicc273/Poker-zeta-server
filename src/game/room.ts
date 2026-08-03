@@ -99,6 +99,13 @@ export interface RoomOptions {
   sendState: (view: TableView) => void;
   /** Comunica un errore senza interrompere la partita. */
   sendError: (message: string) => void;
+  /**
+   * Comunica l'esito di una mano per far avanzare le missioni.
+   *
+   * La stanza non conosce né il database né l'utente: sa solo cosa
+   * è successo. Chi la costruisce collega questa funzione al wallet.
+   */
+  onHandComplete?: (esito: { won: boolean; chipsWon: number }) => void;
 }
 
 export class Room {
@@ -113,6 +120,9 @@ export class Room {
 
   private readonly sendState: (view: TableView) => void;
   private readonly sendError: (message: string) => void;
+  private readonly onHandComplete?: (
+    esito: { won: boolean; chipsWon: number },
+  ) => void;
 
   private state: HandState | null = null;
   private log: ActionLogEntry[] = [];
@@ -138,6 +148,7 @@ export class Room {
     this.humanId = options.humanPlayerId;
     this.sendState = options.sendState;
     this.sendError = options.sendError;
+    this.onHandComplete = options.onHandComplete;
 
     const buyIn = sanitizeBuyIn(options.buyIn);
     const derived = deriveTableConfig(buyIn);
@@ -418,6 +429,28 @@ export class Room {
       }
       this.dealerSeat = (this.dealerSeat + 1) % MAX_SEATS;
       this.clearBotTimer();
+
+      // Le missioni avanzano solo se il giocatore ha davvero preso
+      // parte alla mano: chi è a zero fiche resta fuori dai
+      // partecipanti e non deve maturare progresso.
+      const inMano = next.players.some((p) => p.playerId === this.humanId);
+      if (inMano && this.onHandComplete) {
+        const vinta = next.payouts.find((p) => p.playerId === this.humanId);
+        try {
+          this.onHandComplete({
+            won: vinta !== undefined && vinta.amount > 0,
+            // Già al netto del rake: settleHand ha decurtato i payouts
+            // poco sopra, quindi è quello che il giocatore incassa.
+            chipsWon: vinta?.amount ?? 0,
+          });
+        } catch (error) {
+          // Le missioni non devono poter far cadere una mano.
+          console.error(
+            `Registrazione missioni fallita nella stanza ${this.roomId}:`,
+            error,
+          );
+        }
+      }
     }
 
     this.broadcast();
