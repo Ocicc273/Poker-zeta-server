@@ -152,6 +152,54 @@ export async function recordRake(
   });
   return Number(result.rakeTotal ?? 0);
 }
+/** Le metriche che il catalogo missioni sa contare. */
+export type MissionMetric =
+  | 'hands_played'
+  | 'hands_won'
+  | 'chips_won'
+  | 'daily_login';
+
+/**
+ * Registra un fatto che fa avanzare le missioni.
+ *
+ * NON solleva mai. Le missioni sono un contorno: un guasto qui non
+ * deve poter far cadere una mano vera. Restituisce quante missioni
+ * si sono completate adesso, zero se qualcosa è andato storto.
+ */
+export async function recordMissionEvent(
+  userId: string,
+  metric: MissionMetric,
+  amount = 1,
+): Promise<number> {
+  try {
+    const result = await callWallet<{ completed?: number }>({
+      action: 'mission-event',
+      userId,
+      metric,
+      amount: Math.max(0, Math.floor(amount)),
+    });
+    return Number(result.completed ?? 0);
+  } catch (error) {
+    console.error(`Registrazione missione fallita (${metric}):`, error);
+    return 0;
+  }
+}
+
+/**
+ * Riscuote una missione completata: l'XP entra nello Zeta Prestige.
+ * Torna zero se non spetta — che non è un errore, come per il fondo.
+ */
+export async function claimMission(
+  userId: string,
+  code: string,
+): Promise<number> {
+  const result = await callWallet<{ grantedXp?: number }>({
+    action: 'mission-claim',
+    userId,
+    code,
+  });
+  return Number(result.grantedXp ?? 0);
+    }
 /** Un movimento del bankroll dei bot, come lo restituisce il database. */
 export interface BotBankrollMovement {
   id: number;
