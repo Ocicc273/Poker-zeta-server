@@ -16,6 +16,7 @@ import {
   closeTableSession,
   drawFromBotPool,
   openTableSession,
+  recordMissionEvent,
   recordRake,
   returnToBotPool,
   WalletError,
@@ -148,6 +149,18 @@ export async function joinRoom(
     sendState: (view) => emitToPlayer(playerId, ServerEvent.TableState, view),
     sendError: (message) =>
       emitToPlayer(playerId, ServerEvent.Error, { message }),
+    onHandComplete: ({ won, chipsWon }) => {
+      // Non si aspetta l'esito: la mano è già conclusa e il
+      // giocatore non deve attendere il database per vederne il
+      // risultato. Gli errori sono già ingoiati dalla funzione.
+      void recordMissionEvent(playerId, 'hands_played', 1);
+      if (won) {
+        void recordMissionEvent(playerId, 'hands_won', 1);
+        if (chipsWon > 0) {
+          void recordMissionEvent(playerId, 'chips_won', chipsWon);
+        }
+      }
+    },
   };
 
   const room = new Room(options);
