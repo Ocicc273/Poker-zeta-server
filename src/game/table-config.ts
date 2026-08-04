@@ -19,8 +19,21 @@ import {
   type StakeLevel,
 } from './stakes.js';
 
-/** Posti al tavolo: 1 umano + 2 bot. */
+/**
+ * Posti al tavolo contro i bot: 1 umano + 2 bot.
+ *
+ * Resta 3 perché i BOTS in room.ts sono due. Non è il limite del
+ * motore, che regge fino a MAX_SEATS_PRIVATE.
+ */
 export const MAX_SEATS = 3;
+
+/**
+ * Posti di un tavolo privato.
+ *
+ * Sei è il numero delle poltrone disegnate nella sala: mettere un
+ * settimo giocatore significherebbe non avere dove sederlo.
+ */
+export const MAX_SEATS_PRIVATE = 6;
 
 /** Limiti assoluti, ricavati dalla scala invece di essere ripetuti. */
 export const MIN_BUY_IN = LOWEST_LEVEL.minBuyIn;
@@ -63,12 +76,15 @@ export interface DerivedTable {
  * differenza fra "scelgo un tavolo e decido quanto portarci" e
  * "il mio stack decide che tavolo è", che era il modello sbagliato.
  */
-export function deriveTableConfig(buyIn: number): DerivedTable {
+export function deriveTableConfig(
+  buyIn: number,
+  maxSeats: number = MAX_SEATS,
+): DerivedTable {
   const stake = resolveStakeLevel(buyIn);
 
   return {
     config: {
-      maxSeats: MAX_SEATS,
+      maxSeats,
       blinds: {
         smallBlind: stake.smallBlind,
         bigBlind: stake.bigBlind,
