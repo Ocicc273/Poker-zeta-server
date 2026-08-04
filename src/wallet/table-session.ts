@@ -157,7 +157,9 @@ export type MissionMetric =
   | 'hands_played'
   | 'hands_won'
   | 'chips_won'
-  | 'daily_login';
+  | 'daily_login'
+  | 'private_table_created'
+  | 'private_hands_played';
 
 /**
  * Registra un fatto che fa avanzare le missioni.
@@ -230,4 +232,46 @@ export async function botStatus(): Promise<BotBankrollStatus> {
     updatedAt: result.updated_at ?? null,
     movements: result.movements ?? [],
   };
+}
+/**
+ * Apre un tavolo privato e restituisce il codice d'invito.
+ *
+ * Non muove fiche: le fiche dei tavoli privati non vengono dal
+ * wallet. Questa riga serve solo a rendere il codice ritrovabile
+ * da chi lo digita e a mostrare il tavolo nell'elenco.
+ */
+export async function openPrivateTable(
+  hostId: string,
+  stakeLevel: number,
+  buyIn: number,
+  maxSeats: number,
+): Promise<string> {
+  const result = await callWallet<{ code?: string }>({
+    action: 'private-open',
+    hostId,
+    stakeLevel: Math.max(1, Math.floor(stakeLevel)),
+    buyIn: Math.max(1, Math.floor(buyIn)),
+    maxSeats: Math.max(2, Math.floor(maxSeats)),
+  });
+
+  if (typeof result.code !== 'string') {
+    throw new WalletError('Tavolo non creato dal servizio wallet.');
+  }
+
+  return result.code;
+}
+
+/**
+ * Segna un tavolo privato come chiuso.
+ *
+ * NON solleva: viene invocata anche quando l'ultimo giocatore se ne
+ * va, dove non c'è nessuno a cui riportare l'errore. Una riga
+ * rimasta aperta è brutta nell'elenco ma non rompe niente.
+ */
+export async function closePrivateTable(code: string): Promise<void> {
+  try {
+    await callWallet({ action: 'private-close', code });
+  } catch (error) {
+    console.error(`Chiusura del tavolo privato ${code} fallita:`, error);
+  }
 }
