@@ -107,6 +107,14 @@ export interface TableView {
   payouts: readonly PayoutView[];
   blinds: { smallBlind: number; bigBlind: number; ante: number };
   log: readonly ActionLogEntry[];
+  /**
+   * Fiche trattenute dal rake in questo tavolo dall'apertura.
+   *
+   * Presente solo nei tavoli privati e solo per chi ospita: serve
+   * a sapere quanto si è consumato il tavolo e decidere quando
+   * ricaricare. Altrove è null o assente.
+   */
+  privateRakeTotal?: number | null;
 }
 
 export interface ServerErrorPayload {
