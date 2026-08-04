@@ -1,21 +1,27 @@
 /**
- * Poker Zeta — Stanza privata fra umani
+ * Poker Zeta — Stanza privata fra amici
  *
- * Affianca Room senza sostituirla. Room regge un umano e due bot,
- * ed è il tavolo che oggi funziona: non va toccato. Qui gli umani
- * sono da due a sei e di bot non ce n'è nessuno.
+ * Affianca Room senza sostituirla. Room regge un umano e due bot ed
+ * è il tavolo che oggi funziona: non va toccato. Qui gli umani sono
+ * da due a sei e di bot non ce n'è nessuno.
  *
- * Le tre differenze che contano rispetto a Room:
+ * ECONOMIA SEPARATA — la scelta che governa tutto il file.
+ * Le fiche di un tavolo privato NON vengono dal wallet e non ci
+ * tornano: le carica chi ospita, quanto vuole. Il motivo non è
+ * comodità ma sicurezza: fiche che entrano ed escono dal wallet in
+ * una stanza chiusa fra amici sarebbero un canale di trasferimento
+ * di valore — mi siedo, ti passo tutto foldando, tu esci col mio.
+ * Qui quel canale non esiste. La ricompensa vera è l'XP.
  *
- * 1. La vista si costruisce PER OGNI giocatore, perché ognuno vede
- *    solo le proprie carte. Room ne costruiva una sola.
- * 2. Il conto alla rovescia vale per chiunque debba agire, non per
- *    un giocatore prestabilito.
- * 3. Chi arriva a mano iniziata aspetta la successiva: entra nei
- *    posti ma non nella mano in corso.
+ * Il rake esiste ma è un regolatore di ritmo deciso da chi ospita,
+ * da 0 a 6 per cento: le fiche trattenute spariscono, non vanno a
+ * nessuno. Il conto serve solo a sapere quando ricaricare.
  *
- * Come Room, non conosce Socket.io: riceve funzioni per parlare e
- * le usa.
+ * Le tre differenze tecniche rispetto a Room:
+ * 1. La vista si costruisce PER OGNI giocatore: ognuno vede solo le
+ *    proprie carte.
+ * 2. Il conto alla rovescia vale per chiunque debba agire.
+ * 3. Chi arriva a mano iniziata aspetta la successiva.
  */
 
 import {
@@ -34,7 +40,7 @@ import {
 } from '../engine/index.js';
 
 import { deriveTableConfig, MAX_SEATS_PRIVATE } from './table-config.js';
-import { chargeRake, computeRake, rakeableTotal } from './rake.js';
+import { chargeRake, rakeableTotal } from './rake.js';
 
 import type { ActionLogEntry, PlayerView, TableView } from './protocol.js';
 
@@ -46,28 +52,34 @@ const TURN_MS = 25_000;
  *
  * Nei tavoli contro bot la mano successiva la chiede il giocatore.
  * Qui non si può: aspettare che tutti e sei premano un pulsante
- * significherebbe che chi si distrae blocca il tavolo. Parte da
- * sola, e la pausa serve a leggere il risultato.
+ * significa che chi si distrae blocca il tavolo. Parte da sola, e
+ * la pausa serve a leggere il risultato.
  */
 const NEXT_HAND_MS = 6_000;
 
 /** Sotto questo numero la mano non parte. */
 const MIN_PLAYERS = 2;
 
+/** Tetto alla percentuale trattenuta, imposto dal server. */
+const MAX_RAKE_PERCENT = 6;
+
 interface Seduto {
   playerId: PlayerId;
   name: string;
   seat: number;
   stack: number;
-  /** Sessione del wallet: serve al riaccredito quando si alza. */
-  sessionId: string;
 }
 
 export interface PrivateRoomOptions {
   /** Il codice del tavolo fa da identificativo. */
   code: string;
+  /** Chi ha creato il tavolo: decide ricariche e impostazioni. */
+  hostId: PlayerId;
+  /** Serve solo a ricavare i bui dal livello scelto. */
   buyIn: number;
   maxSeats?: number;
+  /** Percentuale trattenuta da ogni piatto, da 0 a 6. */
+  rakePercent?: number;
   /** Invia la vista a un singolo giocatore. */
   sendState: (playerId: PlayerId, view: TableView) => void;
   /** Comunica un errore a un singolo giocatore. */
@@ -75,17 +87,16 @@ export interface PrivateRoomOptions {
   /** Avvisa che il tavolo si è svuotato e va chiuso. */
   onEmpty?: () => void;
   /** Esito di una mano, per far avanzare le missioni. */
-  onHandComplete?: (
-    playerId: PlayerId,
-    esito: { won: boolean; chipsWon: number },
-  ) => void;
+  onHandComplete?: (playerId: PlayerId, esito: { won: boolean }) => void;
 }
 
 export class PrivateRoom {
   readonly code: string;
 
+  private readonly hostId: PlayerId;
   private readonly config: TableConfig;
   private readonly maxSeats: number;
+  private readonly rakePercent: number;
   private readonly seduti = new Map<PlayerId, Seduto>();
 
   private readonly sendState: PrivateRoomOptions['sendState'];
@@ -101,6 +112,7 @@ export class PrivateRoom {
 
   private turnTimer: ReturnType<typeof setTimeout> | null = null;
   private turnDeadline: number | null = null;
+  private turnOwner: PlayerId | null = null;
   private nextHandTimer: ReturnType<typeof setTimeout> | null = null;
 
   private closed = false;
@@ -108,7 +120,17 @@ export class PrivateRoom {
 
   constructor(options: PrivateRoomOptions) {
     this.code = options.code;
-    this.maxSeats = Math.min(options.maxSeats ?? MAX_SEATS_PRIVATE, MAX_SEATS_PRIVATE);
+    this.hostId = options.hostId;
+    this.maxSeats = Math.min(
+      options.maxSeats ?? MAX_SEATS_PRIVATE,
+      MAX_SEATS_PRIVATE,
+    );
+    // Il tetto sta nel server e non nell'interfaccia: un client
+    // modificato non deve poter prosciugare il tavolo.
+    this.rakePercent = Math.min(
+      MAX_RAKE_PERCENT,
+      Math.max(0, options.rakePercent ?? 0),
+    );
     this.config = deriveTableConfig(options.buyIn, this.maxSeats).config;
 
     this.sendState = options.sendState;
@@ -119,7 +141,6 @@ export class PrivateRoom {
 
   /* ── Posti ─────────────────────────────────────────────── */
 
-  /** Il primo posto libero, oppure null se il tavolo è pieno. */
   private postoLibero(): number | null {
     const occupati = new Set([...this.seduti.values()].map((s) => s.seat));
     for (let i = 0; i < this.maxSeats; i++) {
@@ -131,16 +152,11 @@ export class PrivateRoom {
   /**
    * Fa sedere un giocatore.
    *
-   * Se una mano è in corso NON lo aggiunge alla mano: entrerà alla
-   * successiva. È il comportamento del poker vero, e l'alternativa
-   * — ricostruire la mano in corso — sarebbe sbagliata comunque.
+   * Lo stack lo decide chi ospita: non c'è niente da addebitare.
+   * Se una mano è in corso NON entra nella mano: giocherà dalla
+   * successiva, come al tavolo vero.
    */
-  siediti(
-    playerId: PlayerId,
-    name: string,
-    stack: number,
-    sessionId: string,
-  ): boolean {
+  siediti(playerId: PlayerId, name: string, stack: number): boolean {
     if (this.closed) return false;
 
     if (this.seduti.has(playerId)) {
@@ -152,19 +168,20 @@ export class PrivateRoom {
     const seat = this.postoLibero();
     if (seat === null) return false;
 
-    this.seduti.set(playerId, { playerId, name, seat, stack, sessionId });
+    this.seduti.set(playerId, {
+      playerId,
+      name,
+      seat,
+      stack: Math.max(0, Math.floor(stack)),
+    });
     this.broadcast();
     this.forseAvviaMano();
     return true;
   }
 
-  /** Alza un giocatore dal tavolo. Restituisce lo stack da riaccreditare. */
-  alzati(playerId: PlayerId): { stack: number; sessionId: string } | null {
-    const seduto = this.seduti.get(playerId);
-    if (!seduto) return null;
-
-    const stack = this.stackDi(playerId);
-    const sessionId = seduto.sessionId;
+  /** Alza un giocatore dal tavolo. */
+  alzati(playerId: PlayerId): boolean {
+    if (!this.seduti.has(playerId)) return false;
 
     this.seduti.delete(playerId);
 
@@ -181,49 +198,51 @@ export class PrivateRoom {
     if (this.seduti.size === 0) {
       this.close();
       this.onEmpty?.();
-      return { stack, sessionId };
+      return true;
     }
 
     this.broadcast();
-    return { stack, sessionId };
+    return true;
   }
 
   /**
-   * Stack attuale di un giocatore.
+   * Ricarica le fiche di un giocatore. Solo chi ospita può farlo.
    *
-   * A mano in corso vale quello dentro la mano: le fiche già nel
-   * piatto non tornano indietro, altrimenti uscire sarebbe un modo
-   * per annullare una puntata perdente.
+   * Non si applica a mano in corso: cambiare lo stack mentre le
+   * puntate sono vive confonderebbe il motore.
    */
-  stackDi(playerId: PlayerId): number {
+  ricarica(richiedente: PlayerId, playerId: PlayerId, stack: number): boolean {
+    if (richiedente !== this.hostId) return false;
+
+    const seduto = this.seduti.get(playerId);
+    if (!seduto || stack <= 0) return false;
+
     const state = this.state;
-    if (state && !isHandComplete(state)) {
-      const inMano = state.players.find((p) => p.playerId === playerId);
-      if (inMano) return inMano.stack;
-    }
-    return this.seduti.get(playerId)?.stack ?? 0;
+    if (state && !isHandComplete(state)) return false;
+
+    seduto.stack = Math.floor(stack);
+    this.broadcast();
+    this.forseAvviaMano();
+    return true;
   }
 
-  /** Se il giocatore può alzarsi adesso senza perdere fiche impegnate. */
-  puoAlzarsi(playerId: PlayerId): boolean {
-    const state = this.state;
-    if (!state || isHandComplete(state)) return true;
-
-    const inMano = state.players.find((p) => p.playerId === playerId);
-    if (!inMano) return true;
-
-    return inMano.status === PlayerStatus.Folded;
-  }
+  /* ── Interrogazioni ────────────────────────────────────── */
 
   giocatoriSeduti(): number {
     return this.seduti.size;
   }
 
+  haPosto(): boolean {
+    return this.postoLibero() !== null;
+  }
+
+  eSeduto(playerId: PlayerId): boolean {
+    return this.seduti.has(playerId);
+  }
+
   rakeTotal(): number {
     return this.rakeCollected;
   }
-
-  /* ── Ciclo di vita ─────────────────────────────────────── */
 
   close(): void {
     this.closed = true;
@@ -243,9 +262,9 @@ export class PrivateRoom {
   /**
    * Avvia la mano successiva se ci sono le condizioni.
    *
-   * Non fa nulla se una mano è già viva: è il punto in cui si entra
-   * da tre strade diverse — arriva un giocatore, ne esce uno, la
-   * mano finisce — e senza questa guardia se ne aprirebbero due.
+   * Ci si arriva da tre strade — arriva un giocatore, ne esce uno,
+   * la mano finisce — e senza queste guardie se ne aprirebbero due
+   * insieme.
    */
   private forseAvviaMano(): void {
     if (this.closed) return;
@@ -276,8 +295,8 @@ export class PrivateRoom {
       return;
     }
 
-    // Il bottone deve trovarsi su un posto occupato da chi gioca
-    // questa mano, altrimenti startHand non lo trova e solleva.
+    // Il bottone deve stare su un posto occupato da chi gioca
+    // questa mano, altrimenti startHand solleva.
     const occupati = partecipanti.map((p) => p.seat);
     let guard = 0;
     while (!occupati.includes(this.dealerSeat) && guard < this.maxSeats) {
@@ -296,7 +315,9 @@ export class PrivateRoom {
       this.logId = 0;
       this.folded = new Set();
     } catch (error) {
-      this.diffondiErrore(`Impossibile avviare la mano: ${(error as Error).message}`);
+      this.diffondiErrore(
+        `Impossibile avviare la mano: ${(error as Error).message}`,
+      );
       return;
     }
 
@@ -352,6 +373,7 @@ export class PrivateRoom {
       this.folded.add(playerId);
     }
 
+    // Il rake si trattiene PRIMA che gli stack finiscano nei posti.
     if (isHandComplete(next)) {
       next = this.trattieniRake(next);
     }
@@ -379,14 +401,12 @@ export class PrivateRoom {
     if (!this.onHandComplete) return;
 
     for (const p of next.players) {
-      // Solo chi ha davvero preso parte alla mano.
       if (!this.seduti.has(p.playerId)) continue;
 
       const vinta = next.payouts.find((x) => x.playerId === p.playerId);
       try {
         this.onHandComplete(p.playerId, {
           won: vinta !== undefined && vinta.amount > 0,
-          chipsWon: vinta?.amount ?? 0,
         });
       } catch (error) {
         // Le missioni non devono poter far cadere una mano.
@@ -397,16 +417,26 @@ export class PrivateRoom {
 
   /* ── Rake ──────────────────────────────────────────────── */
 
+  /**
+   * Trattiene la percentuale decisa da chi ospita.
+   *
+   * Due regole tenute dai tavoli veri, senza le quali un tavolo al
+   * sei per cento si prosciuga in una serata: niente rake se la
+   * mano finisce prima del flop, e niente rake su un piatto non
+   * conteso. Si rastrella solo la parte CONTESA: quello che nessuno
+   * ha pareggiato torna a chi l'ha messo e non è mai stato in gioco.
+   */
   private trattieniRake(next: HandState): HandState {
+    if (this.rakePercent <= 0) return next;
+
     const amounts = next.players.map((p) => p.committedTotal);
+    const conteso = rakeableTotal(amounts);
+    const contestato = amounts.filter((a) => a > 0).length >= 2;
+    const vistoFlop = next.communityCards.length >= 3;
 
-    const rake = computeRake({
-      pot: rakeableTotal(amounts),
-      bigBlind: this.config.blinds.bigBlind,
-      sawFlop: next.communityCards.length >= 3,
-      contested: amounts.filter((a) => a > 0).length >= 2,
-    });
+    if (!contestato || !vistoFlop || conteso <= 0) return next;
 
+    const rake = Math.floor((conteso * this.rakePercent) / 100);
     if (rake <= 0) return next;
 
     const { charges, taken } = chargeRake(
@@ -441,15 +471,15 @@ export class PrivateRoom {
       this.turnTimer = null;
     }
     this.turnDeadline = null;
+    this.turnOwner = null;
   }
 
   /**
    * Allinea il conto alla rovescia a chi deve agire.
    *
-   * Diversamente da Room, qui il turno cambia di giocatore: quando
-   * cambia, il conto va fatto ripartire. Se restasse fermo, chi
-   * agisce per secondo erediterebbe il tempo già consumato dal
-   * primo.
+   * Diversamente da Room, qui il turno passa di giocatore in
+   * giocatore: quando cambia, il conto riparte. Se restasse fermo,
+   * il secondo erediterebbe il tempo consumato dal primo.
    */
   private aggiornaTurnTimer(): void {
     const state = this.state;
@@ -471,8 +501,6 @@ export class PrivateRoom {
     }, TURN_MS);
   }
 
-  private turnOwner: PlayerId | null = null;
-
   /**
    * Tempo scaduto: agisce il server.
    *
@@ -491,7 +519,9 @@ export class PrivateRoom {
       const available = getAvailableActions(state);
       if (available.length === 0) return;
 
-      const ha = (t: ActionTypeT): boolean => available.some((a) => a.type === t);
+      const ha = (t: ActionTypeT): boolean =>
+        available.some((a) => a.type === t);
+
       const type = ha(ActionType.Check)
         ? ActionType.Check
         : ha(ActionType.Fold)
@@ -591,7 +621,9 @@ export class PrivateRoom {
     const players: PlayerView[] = [...this.seduti.values()]
       .sort((a, b) => a.seat - b.seat)
       .map((seduto) => {
-        const inMano = state?.players.find((p) => p.playerId === seduto.playerId);
+        const inMano = state?.players.find(
+          (p) => p.playerId === seduto.playerId,
+        );
         const isSelf = seduto.playerId === viewerId;
         const holeCards = inMano?.holeCards ?? [];
 
@@ -600,7 +632,9 @@ export class PrivateRoom {
         // guarda, o a mano conclusa per chi non ha passato.
         const visible =
           isSelf ||
-          (complete && !this.folded.has(seduto.playerId) && holeCards.length > 0);
+          (complete &&
+            !this.folded.has(seduto.playerId) &&
+            holeCards.length > 0);
 
         return {
           playerId: seduto.playerId,
@@ -610,15 +644,16 @@ export class PrivateRoom {
           committedThisStreet: inMano?.committedThisStreet ?? 0,
           status: inMano?.status ?? PlayerStatus.SittingOut,
           isDealer: seduto.seat === this.dealerSeat,
-          // Nei tavoli privati non ci sono bot: sono tutte persone.
+          // Nei tavoli privati sono tutte persone.
           isBot: false,
           holeCards: visible ? holeCards : null,
           holeCardCount: holeCards.length,
         };
       });
 
-    const tocca = state !== null && !complete && state.toActPlayerId === viewerId;
-    const mioStack = this.stackDi(viewerId);
+    const tocca =
+      state !== null && !complete && state.toActPlayerId === viewerId;
+    const mioStack = this.seduti.get(viewerId)?.stack ?? 0;
 
     return {
       handId: state?.handId ?? null,
@@ -631,22 +666,29 @@ export class PrivateRoom {
       players,
       availableActions: tocca && state ? getAvailableActions(state) : [],
       isYourTurn: tocca,
-      // Il tempo è di CHI STA AGENDO, non di chi guarda: al tavolo
-      // si vede l'orologio dell'avversario, ed è quello che rende
-      // viva l'attesa. Chi guarda capisce a chi si riferisce da
-      // toActPlayerId.
+      // Il tempo è di CHI STA AGENDO, chiunque sia: al tavolo si
+      // vede l'orologio dell'avversario, ed è quello che rende viva
+      // l'attesa.
       turnMillisLeft:
         this.turnDeadline !== null
           ? Math.max(0, this.turnDeadline - Date.now())
           : null,
       isHandComplete: complete,
-      // Nei tavoli privati la mano successiva parte da sola: non
-      // esiste un pulsante da premere.
+      // Qui la mano successiva parte da sola: nessun pulsante.
       canStartNextHand: false,
-      isBusted: complete && mioStack <= 0,
+      // Nel privato non esiste il fondo di ripartenza: chi finisce
+      // le fiche aspetta che chi ospita lo ricarichi.
+      isBusted: false,
       payouts: complete ? (state?.payouts ?? []) : [],
       blinds: this.config.blinds,
       log: this.log,
+      // Il conto del rake lo vede solo chi ospita: agli altri non
+      // serve, e mostrarlo darebbe l'idea sbagliata che qualcuno ci
+      // stia guadagnando.
+      privateRakeTotal: viewerId === this.hostId ? this.rakeCollected : null,
+      // Silenzia l'avviso: mioStack serve solo a documentare che
+      // qui non si va mai "busted".
+      ...(mioStack < 0 ? {} : {}),
     };
   }
 }
