@@ -95,7 +95,11 @@ export interface TableView {
   players: readonly PlayerView[];
   availableActions: readonly AvailableAction[];
   isYourTurn: boolean;
-  /** Millisecondi rimasti al turno, null se non tocca a te. */
+  /**
+   * Millisecondi rimasti a CHI DEVE AGIRE, chiunque sia. null se
+   * nessuno deve agire. Nei tavoli contro bot vale solo per il
+   * proprio turno, nei tavoli privati per il turno di chiunque.
+   */
   turnMillisLeft: number | null;
   isHandComplete: boolean;
   canStartNextHand: boolean;
