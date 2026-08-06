@@ -6,6 +6,12 @@
  * validare al motore e rispedisce una proiezione dello stato.
  * Le partite appartengono ai giocatori, non alle connessioni:
  * un socket che cade non porta via il tavolo.
+ *
+ * Da qui si servono DUE mondi: i tavoli contro bot, dove una
+ * stanza appartiene a un giocatore e le fiche vengono dal wallet;
+ * e i tavoli privati, dove un tavolo appartiene a un codice e le
+ * fiche non toccano il wallet. Ogni gestore ha le sue funzioni e
+ * non si mescolano.
  */
 
 import { createServer } from 'node:http';
@@ -22,7 +28,10 @@ import {
   ClientEvent,
   ServerEvent,
   type ActionPayload,
+  type CreatePrivateTablePayload,
+  type JoinPrivateTablePayload,
   type JoinTablePayload,
+  type RechargePlayerPayload,
 } from './game/protocol.js';
 import {
   activeRoomCount,
@@ -34,6 +43,18 @@ import {
   joinRoom,
   waitingRoomCount,
 } from './game/room-manager.js';
+import {
+  closeAllPrivateTables,
+  configurePrivateRoomManager,
+  createTable as createPrivateTable,
+  detachPrivateSocket,
+  getPrivateTableByPlayer,
+  joinTable as joinPrivateTable,
+  leaveTable as leavePrivateTable,
+  privateTableCount,
+  PrivateTableError,
+  rechargePlayer,
+} from './game/private-room-manager.js';
 
 interface ConnectedPlayer {
   userId: string;
@@ -79,6 +100,7 @@ const httpServer = createServer((req, res) => {
         wallet: 'enabled',
         rooms: activeRoomCount(),
         waiting: waitingRoomCount(),
+        privateTables: privateTableCount(),
       }),
     );
     return;
@@ -95,6 +117,7 @@ const io = new Server(httpServer, {
 });
 
 configureRoomManager(io);
+configurePrivateRoomManager(io);
 
 io.use(async (socket, next) => {
   const token = socket.handshake.auth?.token;
@@ -151,6 +174,16 @@ io.on('connection', (socket) => {
   });
 
   socket.on(ClientEvent.Action, (payload: ActionPayload) => {
+    // I tavoli privati hanno la precedenza: se il giocatore è
+    // seduto lì, è lì che sta agendo. La stanza contro bot può
+    // essere ancora viva in attesa di rientro, e servirla adesso
+    // significherebbe muovere il tavolo sbagliato.
+    const privata = getPrivateTableByPlayer(player.userId);
+    if (privata) {
+      privata.azione(player.userId, payload?.type, payload?.amount);
+      return;
+    }
+
     const room = getRoomByPlayer(player.userId);
     if (!room) {
       socket.emit(ServerEvent.Error, { message: 'Nessun tavolo attivo.' });
@@ -218,10 +251,95 @@ io.on('connection', (socket) => {
     }
   });
 
+  /* ── Tavoli privati ────────────────────────────────────── */
+
+  socket.on(
+    ClientEvent.CreatePrivateTable,
+    async (payload: CreatePrivateTablePayload) => {
+      try {
+        const code = await createPrivateTable(
+          socket.id,
+          player.userId,
+          player.username ?? 'Tu',
+          {
+            stakeLevel: payload?.stakeLevel,
+            maxSeats: payload?.maxSeats,
+            rakePercent: payload?.rakePercent,
+            startingStack: payload?.startingStack,
+          },
+        );
+
+        // Solo a chi ospita: è lui che deve condividerlo.
+        socket.emit(ServerEvent.PrivateTableCreated, { code });
+        console.log(`${label} ha aperto il tavolo privato ${code}`);
+      } catch (error) {
+        const message =
+          error instanceof PrivateTableError
+            ? error.message
+            : 'Impossibile aprire il tavolo privato adesso.';
+
+        console.error(`Apertura tavolo privato fallita per ${label}:`, error);
+        socket.emit(ServerEvent.Error, { message });
+      }
+    },
+  );
+
+  socket.on(
+    ClientEvent.JoinPrivateTable,
+    (payload: JoinPrivateTablePayload) => {
+      try {
+        joinPrivateTable(
+          socket.id,
+          payload?.code,
+          player.userId,
+          player.username ?? 'Tu',
+        );
+        console.log(`${label} è entrato nel tavolo privato`);
+      } catch (error) {
+        // Codice sbagliato e tavolo pieno sono risposte legittime,
+        // non guasti: il messaggio va mostrato così com'è.
+        const message =
+          error instanceof PrivateTableError
+            ? error.message
+            : 'Impossibile entrare nel tavolo.';
+
+        socket.emit(ServerEvent.Error, { message });
+      }
+    },
+  );
+
+  socket.on(ClientEvent.LeavePrivateTable, () => {
+    // Nessun riaccredito: le fiche del privato non sono mai uscite
+    // da un wallet e non ci tornano.
+    leavePrivateTable(player.userId);
+    socket.emit(ServerEvent.TableClosed, {
+      reason: 'Hai lasciato il tavolo privato.',
+    });
+  });
+
+  socket.on(ClientEvent.RechargePlayer, (payload: RechargePlayerPayload) => {
+    const fatto = rechargePlayer(
+      player.userId,
+      payload?.playerId,
+      payload?.stack,
+    );
+
+    if (!fatto) {
+      socket.emit(ServerEvent.Error, {
+        message:
+          'Ricarica non riuscita: può farla solo chi ospita, verso ' +
+          'qualcuno seduto allo stesso tavolo, e non durante una mano.',
+      });
+    }
+  });
+
   socket.on('disconnect', (reason) => {
     // Nessun riaccredito qui: il tavolo resta in attesa, e solo se
     // il giocatore non torna verrà chiuso dal timer di abbandono.
+    // Le due chiamate non si escludono: una sola delle due trova
+    // qualcosa da fare, l'altra esce subito.
     detachSocket(player.userId, socket.id);
+    detachPrivateSocket(player.userId, socket.id);
     console.log(`Socket chiuso: ${player.userId} (${reason}) — tavolo in attesa`);
   });
 });
@@ -255,6 +373,10 @@ process.on('unhandledRejection', (reason) => {
  * processo, lasciando sessioni aperte nel database e fiche fuori
  * dal wallet di chi stava giocando.
  *
+ * I tavoli privati non hanno fiche da restituire, ma vanno chiusi
+ * lo stesso: una riga rimasta aperta in private_tables continuerebbe
+ * a comparire nell'elenco di un tavolo che non esiste più.
+ *
  * Non copre i crash: per quelli servirà una riconciliazione
  * all'avvio che chiuda le sessioni rimaste aperte.
  */
@@ -265,8 +387,8 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
 
   console.log(
-    `${signal} ricevuto: ${activeRoomCount()} tavoli da chiudere, ` +
-      `restituzione fiche…`,
+    `${signal} ricevuto: ${activeRoomCount()} tavoli e ` +
+      `${privateTableCount()} tavoli privati da chiudere…`,
   );
 
   // Le chiamate di rete partono subito: con una finestra di
@@ -275,14 +397,13 @@ async function shutdown(signal: string): Promise<void> {
   const startedAt = Date.now();
 
   try {
-    await closeAllRooms();
+    await Promise.allSettled([closeAllRooms(), closeAllPrivateTables()]);
     console.log(`Tavoli chiusi in ${Date.now() - startedAt} ms.`);
   } catch (error) {
     console.error('Chiusura tavoli fallita durante lo spegnimento:', error);
   }
 
   io.close();
-  
 
   httpServer.close(() => process.exit(0));
 
