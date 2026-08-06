@@ -24,6 +24,10 @@ export const ClientEvent = {
   NextHand: 'client:next-hand',
   LeaveTable: 'client:leave-table',
   ClaimRestartFund: 'client:claim-restart-fund',
+  CreatePrivateTable: 'client:create-private-table',
+  JoinPrivateTable: 'client:join-private-table',
+  LeavePrivateTable: 'client:leave-private-table',
+  RechargePlayer: 'client:recharge-player',
 } as const;
 
 export const ServerEvent = {
@@ -32,7 +36,9 @@ export const ServerEvent = {
   Error: 'server:error',
   TableClosed: 'server:table-closed',
   RestartFund: 'server:restart-fund',
+  PrivateTableCreated: 'server:private-table-created',
 } as const;
+
 /* ── Messaggi dal client ─────────────────────────────────── */
 
 export interface JoinTablePayload {
@@ -136,4 +142,30 @@ export interface TableClosedPayload {
 export interface RestartFundPayload {
   granted: number;
   message: string;
+}
+
+/* ── Messaggi dei tavoli privati ─────────────────────────── */
+
+export interface CreatePrivateTablePayload {
+  /** Numero del livello di stake: decide i bui, non lo stack. */
+  stakeLevel: number;
+  maxSeats: number;
+  /** Da 0 a 6. Oltre, il server taglia. */
+  rakePercent: number;
+  /** Fiche date a ciascuno. Non escono da nessun wallet. */
+  startingStack: number;
+}
+
+export interface JoinPrivateTablePayload {
+  code: string;
+}
+
+export interface RechargePlayerPayload {
+  playerId: PlayerId;
+  stack: number;
+}
+
+/** Il codice da condividere. Arriva solo a chi ha creato il tavolo. */
+export interface PrivateTableCreatedPayload {
+  code: string;
 }
