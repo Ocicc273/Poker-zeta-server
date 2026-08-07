@@ -52,7 +52,7 @@ import {
   joinTable as joinPrivateTable,
   leaveTable as leavePrivateTable,
   privateTableCount,
-  privatePlayerCount
+  privatePlayerCount,
   PrivateTableError,
   rechargePlayer,
 } from './game/private-room-manager.js';
