@@ -381,6 +381,20 @@ export function getPrivateTableByCode(code: string): PrivateRoom | undefined {
 export function privateTableCount(): number {
   return tables.size;
 }
+/**
+ * Quante persone sono sedute, sommando tutti i tavoli privati.
+ *
+ * Diverso da privateTableCount: là si contano i tavoli, qui le
+ * teste. Un tavolo da sei pieno vale uno nel primo conto e sei
+ * in questo.
+ */
+export function privatePlayerCount(): number {
+  let totale = 0;
+  for (const entry of tables.values()) {
+    totale += entry.room.giocatoriSeduti();
+  }
+  return totale;
+}
 
 /** Chiude tutti i tavoli: serve allo spegnimento ordinato. */
 export async function closeAllPrivateTables(): Promise<void> {
