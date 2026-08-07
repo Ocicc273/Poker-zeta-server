@@ -52,6 +52,7 @@ import {
   joinTable as joinPrivateTable,
   leaveTable as leavePrivateTable,
   privateTableCount,
+  privatePlayerCount
   PrivateTableError,
   rechargePlayer,
 } from './game/private-room-manager.js';
@@ -90,7 +91,13 @@ const httpServer = createServer((req, res) => {
     return;
   }
   if (req.url === '/health' || req.url === '/') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      // La Home legge questi numeri dal browser: senza questa
+      // intestazione la richiesta viene bloccata dal CORS. Sono
+      // conteggi aggregati, niente di riservato.
+      'Access-Control-Allow-Origin': '*',
+    });
     res.end(
       JSON.stringify({
         status: 'ok',
@@ -101,6 +108,9 @@ const httpServer = createServer((req, res) => {
         rooms: activeRoomCount(),
         waiting: waitingRoomCount(),
         privateTables: privateTableCount(),
+        // Una persona per stanza contro bot, più i seduti ai
+        // privati: è il numero di teste, non di tavoli.
+        players: activeRoomCount() + privatePlayerCount(),
       }),
     );
     return;
