@@ -189,6 +189,23 @@ async function settle(playerId: PlayerId, result: TwisterResult): Promise<void> 
     await returnToBotPool(alBankroll, 'twister_margin').catch((error) => {
       console.error(`Rientro nel bankroll fallito (${alBankroll}):`, error);
     });
+  } else if (alBankroll < 0) {
+    // Sopra 3× il montepremi supera i tre buy-in raccolti: la
+    // differenza deve USCIRE dal pool, non nascere dal nulla.
+    // Senza questo ramo ogni moltiplicatore alto conia Z-Coins.
+    const mancante = -alBankroll;
+    const preso = await drawFromBotPool(mancante).catch((error) => {
+      console.error(`Prelievo per il jackpot fallito (${mancante}):`, error);
+      return 0;
+    });
+
+    if (preso < mancante) {
+      // Il premio è già stato annunciato al giocatore e va pagato:
+      // qui si lascia solo la traccia di quanto è stato coniato.
+      console.error(
+        `DEFICIT TWISTER: mancano ${mancante - preso} Z-Coins dal pool per ${playerId}`,
+      );
+    }
   }
 
   try {
