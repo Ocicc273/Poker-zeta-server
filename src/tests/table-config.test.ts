@@ -55,44 +55,45 @@ test('scala: ogni livello rispetta i 20-100 big blind', () => {
 });
 
 test('scala: i livelli si trovano per numero', () => {
-  assert.equal(stakeLevelByNumber(1)?.bigBlind, 10);
-  assert.equal(stakeLevelByNumber(5)?.bigBlind, 5_000);
+  assert.equal(stakeLevelByNumber(1)?.bigBlind, 100);
+  assert.equal(stakeLevelByNumber(7)?.bigBlind, 1_000_000);
   assert.equal(stakeLevelByNumber(99), undefined);
 });
 
 /* ── Risoluzione del livello ──────────────────────────────── */
 
 test('livello: un buy-in tipico finisce dove deve', () => {
-  assert.equal(resolveStakeLevel(500).bigBlind, 10);
-  assert.equal(resolveStakeLevel(2_000).bigBlind, 50);
-  assert.equal(resolveStakeLevel(10_000).bigBlind, 200);
-  assert.equal(resolveStakeLevel(50_000).bigBlind, 1_000);
-  assert.equal(resolveStakeLevel(300_000).bigBlind, 5_000);
+  assert.equal(resolveStakeLevel(5_000).bigBlind, 100);
+  assert.equal(resolveStakeLevel(20_000).bigBlind, 500);
+  assert.equal(resolveStakeLevel(100_000).bigBlind, 2_000);
+  assert.equal(resolveStakeLevel(500_000).bigBlind, 10_000);
+  assert.equal(resolveStakeLevel(3_000_000).bigBlind, 50_000);
 });
 
 test('livello: nella sovrapposizione vince la maggiore profondità', () => {
-  // 4.000 sta sia nel livello 2 (80 big blind) sia nel 3 (20 big
+  // 40.000 sta sia nel livello 2 (80 big blind) sia nel 3 (20 big
   // blind). Chi porta quella cifra vuole lo stack profondo.
-  assert.equal(resolveStakeLevel(4_000).level, 2);
-  assert.equal(resolveStakeLevel(5_000).level, 2);
-  assert.equal(resolveStakeLevel(5_001).level, 3);
+  assert.equal(resolveStakeLevel(40_000).level, 2);
+  assert.equal(resolveStakeLevel(50_000).level, 2);
+  assert.equal(resolveStakeLevel(50_001).level, 3);
 });
 
 test('livello: oltre la scala si resta al livello più alto', () => {
-  assert.equal(resolveStakeLevel(9_999_999).level, 5);
+  assert.equal(resolveStakeLevel(999_999_999).level, 7);
 });
 
 /* ── Normalizzazione del buy-in ───────────────────────────── */
 
 test('buy-in: un valore negativo viene riportato al minimo', () => {
   assert.equal(sanitizeBuyIn(-5_000), MIN_BUY_IN);
-  assert.equal(MIN_BUY_IN, 200);
+  assert.equal(MIN_BUY_IN, 2_000);
 });
 
 test('buy-in: un valore enorme viene riportato al massimo', () => {
-  assert.equal(sanitizeBuyIn(9_999_999), MAX_BUY_IN);
-  assert.equal(MAX_BUY_IN, 500_000);
+  assert.equal(sanitizeBuyIn(999_999_999), MAX_BUY_IN);
+  assert.equal(MAX_BUY_IN, 100_000_000);
 });
+
 
 test('buy-in: valori non numerici ricadono sul minimo', () => {
   assert.equal(sanitizeBuyIn('mille'), MIN_BUY_IN);
@@ -105,14 +106,12 @@ test('buy-in: valori non numerici ricadono sul minimo', () => {
 });
 
 test('buy-in: un valore valido resta intero e invariato', () => {
-  assert.equal(sanitizeBuyIn(1_500), 1_500);
-  assert.equal(sanitizeBuyIn(1_500.7), 1_500);
+  assert.equal(sanitizeBuyIn(15_000), 15_000);
+  assert.equal(sanitizeBuyIn(15_000.7), 15_000);
 });
 
 test('buy-in: viene vincolato all intervallo del proprio livello', () => {
-  // 250 appartiene al livello 1, che si ferma a 1.000: non può
-  // salire solo perché la scala nel complesso arriva a 500.000.
-  const normalizzato = sanitizeBuyIn(250);
+  const normalizzato = sanitizeBuyIn(2_500);
   const livello = resolveStakeLevel(normalizzato);
 
   assert.ok(normalizzato >= livello.minBuyIn);
@@ -120,10 +119,7 @@ test('buy-in: viene vincolato all intervallo del proprio livello', () => {
 });
 
 test('buy-in: normalizzare due volte non cambia il risultato', () => {
-  // Il manager normalizza prima di addebitare e la stanza
-  // normalizza di nuovo: se le due divergessero, il giocatore
-  // pagherebbe una cifra e ne riceverebbe un'altra.
-  for (const raw of [-1, 0, 199, 200, 743, 4_000, 50_000, 900_000]) {
+  for (const raw of [-1, 0, 1_999, 2_000, 7_430, 40_000, 500_000, 9_000_000]) {
     const una = sanitizeBuyIn(raw);
     assert.equal(sanitizeBuyIn(una), una, `instabile su ${raw}`);
   }
@@ -132,18 +128,16 @@ test('buy-in: normalizzare due volte non cambia il risultato', () => {
 /* ── Configurazione del tavolo ────────────────────────────── */
 
 test('tavolo: i bui vengono dal livello, non dal buy-in', () => {
-  // Due buy-in diversi dentro lo stesso livello devono dare gli
-  // stessi bui. È l intero senso di questo modulo.
-  const basso = deriveTableConfig(1_200);
-  const alto = deriveTableConfig(4_800);
+  const basso = deriveTableConfig(12_000);
+  const alto = deriveTableConfig(48_000);
 
   assert.equal(basso.config.blinds.bigBlind, alto.config.blinds.bigBlind);
-  assert.equal(basso.config.blinds.bigBlind, 50);
+  assert.equal(basso.config.blinds.bigBlind, 500);
   assert.notEqual(basso.startingStack, alto.startingStack);
 });
 
 test('tavolo: i bui sono interi positivi e coerenti', () => {
-  for (const buyIn of [200, 1_000, 5_000, 20_000, 500_000]) {
+  for (const buyIn of [2_000, 10_000, 50_000, 200_000, 100_000_000]) {
     const { config } = deriveTableConfig(buyIn);
     const { smallBlind, bigBlind } = config.blinds;
 
@@ -155,7 +149,7 @@ test('tavolo: i bui sono interi positivi e coerenti', () => {
 });
 
 test('tavolo: lo stack vale sempre fra 20 e 100 big blind', () => {
-  for (const buyIn of [200, 350, 1_000, 4_000, 17_000, 400_000]) {
+  for (const buyIn of [2_000, 3_500, 10_000, 40_000, 170_000, 4_000_000]) {
     const { config, startingStack } = deriveTableConfig(buyIn);
     const bb = config.blinds.bigBlind;
 
@@ -165,19 +159,20 @@ test('tavolo: lo stack vale sempre fra 20 e 100 big blind', () => {
 });
 
 test('tavolo: il livello viene restituito insieme alla configurazione', () => {
-  // Serve al client per mostrare "Livello 2 — 25/50".
-  assert.equal(deriveTableConfig(2_000).stake.level, 2);
+  assert.equal(deriveTableConfig(20_000).stake.level, 2);
 });
 
 test('tavolo: i posti sono tre', () => {
-  assert.equal(deriveTableConfig(1_000).config.maxSeats, 3);
+  assert.equal(deriveTableConfig(10_000).config.maxSeats, 3);
 });
 
 // Minimi d'ingresso REALI: sotto queste cifre la
 // risoluzione ricade sul livello precedente. La
 // schermata Play del client li ha duplicati, quindi
 // se cambiano qui va cambiato anche lì.
-const ENTRY_MINS = [200, 1_001, 5_001, 20_001, 100_001];
+const ENTRY_MINS = [
+  2_000, 10_001, 50_001, 200_001, 1_000_001, 5_000_001, 20_000_001,
+];
 
 test("ogni minimo d'ingresso risolve il suo livello", () => {
   ENTRY_MINS.forEach((buyIn, index) => {
