@@ -244,7 +244,8 @@ io.on('connection', (socket) => {
               `Z-Coins accreditati. Lascia il tavolo e rientra per ` +
               `giocarli.`
             : `Fondo non disponibile adesso: si riceve una volta ` +
-              `ogni 4 ore, e solo con il saldo sotto la soglia.`,
+              `ogni 4 ore, con il saldo sotto la soglia e solo se ` +
+              `non sei seduto a un tavolo.`,
       });
 
       console.log(`Fondo di ripartenza per ${label}: ${granted}`);
