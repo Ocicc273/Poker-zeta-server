@@ -7,11 +7,15 @@
  * Le partite appartengono ai giocatori, non alle connessioni:
  * un socket che cade non porta via il tavolo.
  *
- * Da qui si servono DUE mondi: i tavoli contro bot, dove una
- * stanza appartiene a un giocatore e le fiche vengono dal wallet;
- * e i tavoli privati, dove un tavolo appartiene a un codice e le
- * fiche non toccano il wallet. Ogni gestore ha le sue funzioni e
- * non si mescolano.
+ * Da qui si servono TRE mondi, con registri separati che non si
+ * mescolano: i tavoli CASH contro bot, dove una stanza appartiene
+ * a un giocatore e le fiche vengono dal wallet; i TWISTER, dove il
+ * buy-in è un'iscrizione spesa e il premio dipende dal
+ * piazzamento; e i tavoli PRIVATI, dove un tavolo appartiene a un
+ * codice e le fiche non toccano il wallet.
+ *
+ * Un giocatore può stare in UNO solo dei tre alla volta: ha un solo
+ * schermo, e un tavolo non guardato va in timeout da sé.
  */
 
 import { createServer } from 'node:http';
@@ -31,6 +35,7 @@ import {
   type CreatePrivateTablePayload,
   type JoinPrivateTablePayload,
   type JoinTablePayload,
+  type JoinTwisterPayload,
   type RechargePlayerPayload,
 } from './game/protocol.js';
 import {
@@ -43,6 +48,15 @@ import {
   joinRoom,
   waitingRoomCount,
 } from './game/room-manager.js';
+import {
+  activeTwisterCount,
+  closeAllTwisterRooms,
+  configureTwisterManager,
+  detachTwisterSocket,
+  dismissTwister,
+  getTwisterByPlayer,
+  joinTwister,
+} from './game/twister-room-manager.js';
 import {
   closeAllPrivateTables,
   configurePrivateRoomManager,
@@ -107,10 +121,12 @@ const httpServer = createServer((req, res) => {
         wallet: 'enabled',
         rooms: activeRoomCount(),
         waiting: waitingRoomCount(),
+        twisters: activeTwisterCount(),
         privateTables: privateTableCount(),
-        // Una persona per stanza contro bot, più i seduti ai
-        // privati: è il numero di teste, non di tavoli.
-        players: activeRoomCount() + privatePlayerCount(),
+        // Teste, non tavoli: una persona per stanza cash, una per
+        // Twister, più i seduti ai privati.
+        players:
+          activeRoomCount() + activeTwisterCount() + privatePlayerCount(),
       }),
     );
     return;
@@ -127,6 +143,7 @@ const io = new Server(httpServer, {
 });
 
 configureRoomManager(io);
+configureTwisterManager(io);
 configurePrivateRoomManager(io);
 
 io.use(async (socket, next) => {
@@ -154,6 +171,15 @@ io.on('connection', (socket) => {
   socket.emit(ServerEvent.Welcome, player);
 
   socket.on(ClientEvent.JoinTable, async (payload: JoinTablePayload) => {
+    // Un Twister in corso non si può abbandonare: il buy-in è già
+    // speso e il piazzamento si decide giocando.
+    if (getTwisterByPlayer(player.userId)) {
+      socket.emit(ServerEvent.Error, {
+        message: 'Hai un Twister in corso. Finiscilo prima di sederti al cash.',
+      });
+      return;
+    }
+
     try {
       const { reattached } = await joinRoom(
         socket.id,
@@ -183,11 +209,57 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on(ClientEvent.JoinTwister, async (payload: JoinTwisterPayload) => {
+    if (getRoomByPlayer(player.userId)) {
+      socket.emit(ServerEvent.Error, {
+        message: 'Hai un tavolo cash aperto. Lascialo prima di iscriverti.',
+      });
+      return;
+    }
+    if (getPrivateTableByPlayer(player.userId)) {
+      socket.emit(ServerEvent.Error, {
+        message: 'Sei seduto a un tavolo privato. Esci prima di iscriverti.',
+      });
+      return;
+    }
+
+    try {
+      const { reattached, room } = await joinTwister(
+        socket.id,
+        player.userId,
+        player.username ?? 'Tu',
+        payload?.buyIn,
+      );
+
+      // A differenza del cash la partita si avvia dentro
+      // joinTwister: il moltiplicatore va annunciato prima della
+      // prima mano, e non c'è niente da aspettare dal client.
+      console.log(
+        reattached
+          ? `${label} è rientrato nel Twister`
+          : `Twister aperto per ${label}: ${room.multiplier}x su ${room.buyIn}`,
+      );
+    } catch (error) {
+      const message =
+        error instanceof WalletError
+          ? error.message
+          : 'Impossibile iscriversi al Twister.';
+
+      console.error(`Iscrizione al Twister rifiutata per ${label}:`, error);
+      socket.emit(ServerEvent.Error, { message });
+      socket.emit(ServerEvent.TableClosed, { reason: message });
+    }
+  });
   socket.on(ClientEvent.Action, (payload: ActionPayload) => {
-    // I tavoli privati hanno la precedenza: se il giocatore è
-    // seduto lì, è lì che sta agendo. La stanza contro bot può
-    // essere ancora viva in attesa di rientro, e servirla adesso
-    // significherebbe muovere il tavolo sbagliato.
+    // L'ordine di precedenza conta: un registro può avere un
+    // tavolo ancora vivo in attesa di rientro, e servirlo adesso
+    // vorrebbe dire muovere il tavolo sbagliato.
+    const twister = getTwisterByPlayer(player.userId);
+    if (twister) {
+      twister.handleHumanAction(payload?.type, payload?.amount);
+      return;
+    }
+
     const privata = getPrivateTableByPlayer(player.userId);
     if (privata) {
       privata.azione(player.userId, payload?.type, payload?.amount);
@@ -203,6 +275,11 @@ io.on('connection', (socket) => {
   });
 
   socket.on(ClientEvent.NextHand, () => {
+    // Nel Twister la mano successiva parte da sola: la richiesta si
+    // ignora invece di dare errore, così un client che manda il
+    // vecchio evento non mostra un allarme inutile.
+    if (getTwisterByPlayer(player.userId)) return;
+
     const room = getRoomByPlayer(player.userId);
     if (!room) {
       socket.emit(ServerEvent.Error, { message: 'Nessun tavolo attivo.' });
@@ -212,6 +289,21 @@ io.on('connection', (socket) => {
   });
 
   socket.on(ClientEvent.LeaveTable, async () => {
+    // Il Twister si congeda solo quando è liquidato: prima, uscire
+    // significherebbe un buy-in speso senza piazzamento.
+    if (getTwisterByPlayer(player.userId)) {
+      if (!dismissTwister(player.userId)) {
+        socket.emit(ServerEvent.Error, {
+          message:
+            'Il Twister si lascia solo alla fine: il buy-in è già ' +
+            'iscritto e il premio dipende dal piazzamento.',
+        });
+        return;
+      }
+      socket.emit(ServerEvent.TableClosed, { reason: 'Twister concluso.' });
+      return;
+    }
+
     const room = getRoomByPlayer(player.userId);
 
     if (room && !room.canLeave()) {
@@ -345,11 +437,14 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', (reason) => {
-    // Nessun riaccredito qui: il tavolo resta in attesa, e solo se
-    // il giocatore non torna verrà chiuso dal timer di abbandono.
-    // Le due chiamate non si escludono: una sola delle due trova
-    // qualcosa da fare, l'altra esce subito.
+    // Nessun riaccredito qui: il tavolo cash resta in attesa, e
+    // solo se il giocatore non torna verrà chiuso dal timer di
+    // abbandono. Nel Twister non stacca niente: la partita
+    // continua e il timer di turno folda per l'assente.
+    // Le tre chiamate non si escludono: una sola trova qualcosa da
+    // fare, le altre escono subito.
     detachSocket(player.userId, socket.id);
+    detachTwisterSocket(player.userId, socket.id);
     detachPrivateSocket(player.userId, socket.id);
     console.log(`Socket chiuso: ${player.userId} (${reason}) — tavolo in attesa`);
   });
@@ -384,9 +479,14 @@ process.on('unhandledRejection', (reason) => {
  * processo, lasciando sessioni aperte nel database e fiche fuori
  * dal wallet di chi stava giocando.
  *
+ * I Twister in corso vengono ANNULLATI, non chiusi: buy-in
+ * rimborsato e quota restituita al bankroll. Le fiche da torneo
+ * non valgono fuori dal tavolo e una partita interrotta non ha
+ * piazzamento.
+ *
  * I tavoli privati non hanno fiche da restituire, ma vanno chiusi
- * lo stesso: una riga rimasta aperta in private_tables continuerebbe
- * a comparire nell'elenco di un tavolo che non esiste più.
+ * lo stesso: una riga rimasta aperta continuerebbe a comparire
+ * nell'elenco di un tavolo che non esiste più.
  *
  * Non copre i crash: per quelli servirà una riconciliazione
  * all'avvio che chiuda le sessioni rimaste aperte.
@@ -398,7 +498,8 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
 
   console.log(
-    `${signal} ricevuto: ${activeRoomCount()} tavoli e ` +
+    `${signal} ricevuto: ${activeRoomCount()} tavoli, ` +
+      `${activeTwisterCount()} Twister e ` +
       `${privateTableCount()} tavoli privati da chiudere…`,
   );
 
@@ -408,7 +509,11 @@ async function shutdown(signal: string): Promise<void> {
   const startedAt = Date.now();
 
   try {
-    await Promise.allSettled([closeAllRooms(), closeAllPrivateTables()]);
+    await Promise.allSettled([
+      closeAllRooms(),
+      closeAllTwisterRooms(),
+      closeAllPrivateTables(),
+    ]);
     console.log(`Tavoli chiusi in ${Date.now() - startedAt} ms.`);
   } catch (error) {
     console.error('Chiusura tavoli fallita durante lo spegnimento:', error);
