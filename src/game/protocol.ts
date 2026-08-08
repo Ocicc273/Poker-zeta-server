@@ -20,6 +20,7 @@ import type {
 
 export const ClientEvent = {
   JoinTable: 'client:join-table',
+  JoinTwister: 'client:join-twister',
   Action: 'client:action',
   NextHand: 'client:next-hand',
   LeaveTable: 'client:leave-table',
@@ -45,6 +46,10 @@ export interface JoinTablePayload {
   buyIn: number;
 }
 
+export interface JoinTwisterPayload {
+  /** Verrà riportato al più vicino fra i sei livelli ammessi. */
+  buyIn: number;
+}
 export interface ActionPayload {
   type: ActionType;
   amount?: number;
@@ -121,6 +126,16 @@ export interface TableView {
    * ricaricare. Altrove è null o assente.
    */
   privateRakeTotal?: number | null;
+  /**
+   * Quale tavolo è. Oggi se ne gioca uno alla volta, quindi il
+   * client può ignorarlo: esiste perché il giorno del multi-table
+   * il contratto di rete non vada riscritto.
+   */
+  tableId?: string;
+  /** Che partita è: decide quale schermata il client deve mostrare. */
+  format?: 'cash' | 'twister' | 'private';
+  /** Solo nel Twister: il moltiplicatore estratto dal server. */
+  twisterMultiplier?: number | null;
 }
 
 export interface ServerErrorPayload {
