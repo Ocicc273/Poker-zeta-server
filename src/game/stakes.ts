@@ -31,11 +31,13 @@ export interface StakeLevel {
  * sceglie sempre quello che dà più profondità di stack.
  */
 export const HOLDEM_STAKES: readonly StakeLevel[] = [
-  { level: 1, smallBlind: 5, bigBlind: 10, minBuyIn: 200, maxBuyIn: 1_000 },
-  { level: 2, smallBlind: 25, bigBlind: 50, minBuyIn: 1_000, maxBuyIn: 5_000 },
-  { level: 3, smallBlind: 100, bigBlind: 200, minBuyIn: 4_000, maxBuyIn: 20_000 },
-  { level: 4, smallBlind: 500, bigBlind: 1_000, minBuyIn: 20_000, maxBuyIn: 100_000 },
-  { level: 5, smallBlind: 2_500, bigBlind: 5_000, minBuyIn: 100_000, maxBuyIn: 500_000 },
+  { level: 1, smallBlind: 50, bigBlind: 100, minBuyIn: 2_000, maxBuyIn: 10_000 },
+  { level: 2, smallBlind: 250, bigBlind: 500, minBuyIn: 10_000, maxBuyIn: 50_000 },
+  { level: 3, smallBlind: 1_000, bigBlind: 2_000, minBuyIn: 40_000, maxBuyIn: 200_000 },
+  { level: 4, smallBlind: 5_000, bigBlind: 10_000, minBuyIn: 200_000, maxBuyIn: 1_000_000 },
+  { level: 5, smallBlind: 25_000, bigBlind: 50_000, minBuyIn: 1_000_000, maxBuyIn: 5_000_000 },
+  { level: 6, smallBlind: 100_000, bigBlind: 200_000, minBuyIn: 4_000_000, maxBuyIn: 20_000_000 },
+  { level: 7, smallBlind: 500_000, bigBlind: 1_000_000, minBuyIn: 20_000_000, maxBuyIn: 100_000_000 },
 ] as const;
 
 /** Il livello più basso: soglia del fondo di ripartenza (ECON-001 §4). */
