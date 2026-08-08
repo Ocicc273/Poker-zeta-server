@@ -125,7 +125,13 @@ export async function joinTwister(
     humanName: playerName,
     buyIn,
     multiplier,
-    sendState: (view) => emitToPlayer(playerId, ServerEvent.TableState, view),
+    sendState: (view) =>
+      emitToPlayer(playerId, ServerEvent.TableState, {
+        ...view,
+        tableId: `twister-${playerId}`,
+        format: 'twister' as const,
+        twisterMultiplier: multiplier,
+      }),
     sendError: (message) => emitToPlayer(playerId, ServerEvent.Error, { message }),
     onFinish: (result) => {
       void settle(playerId, result).catch((error) => {
@@ -226,6 +232,25 @@ export function activeTwisterCount(): number {
   }
   return count;
 }
+/**
+ * Chiude una partita GIÀ liquidata, quando il giocatore preme
+ * "esci" sulla schermata del risultato.
+ *
+ * Rifiuta se non è liquidata: durante il gioco non si esce, e
+ * lasciarlo fare qui vorrebbe dire un buy-in speso senza
+ * piazzamento — cioè fiche perse per un tocco sbagliato.
+ */
+export function dismissTwister(playerId: PlayerId): boolean {
+  const entry = games.get(playerId);
+  if (!entry || !entry.settled) return false;
+
+  if (entry.cleanupTimer !== null) clearTimeout(entry.cleanupTimer);
+  entry.room.close();
+  games.delete(playerId);
+  return true;
+}
+
+/* ── Spegnimento ─────────────────────────────────────────── */
 
 /* ── Spegnimento ─────────────────────────────────────────── */
 
