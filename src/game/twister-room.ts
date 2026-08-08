@@ -242,7 +242,18 @@ export class TwisterRoom {
   }
 
   /* ── Mani ──────────────────────────────────────────────── */
+/**
+   * La partita è decisa quando resta un solo giocatore con fiche
+   * OPPURE quando l'umano è fuori: il suo piazzamento è fissato
+   * nell'istante dell'eliminazione, e restare a guardare due bot
+   * non aggiunge niente — nemmeno ai conti, perché le quote dei
+   * bot tornano al pool in ogni caso.
+   */
+  private decisa(): boolean {
+    return this.vivi().length <= 1 || (this.chips.get(this.humanId) ?? 0) <= 0;
+  }
 
+  private vivi(): PlayerId[] {
   private vivi(): PlayerId[] {
     return [...this.chips.entries()]
       .filter(([, c]) => c > 0)
@@ -253,7 +264,7 @@ export class TwisterRoom {
     if (this.closed || this.finita) return;
 
     const vivi = this.vivi();
-    if (vivi.length <= 1) {
+    if (this.decisa()) {
       this.concludi();
       return;
     }
@@ -365,7 +376,7 @@ export class TwisterRoom {
       this.clearTurnTimer();
       this.clearBotTimer();
 
-      if (this.vivi().length <= 1) {
+      if (this.decisa()) {
         this.broadcast();
         this.concludi();
         return;
