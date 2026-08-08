@@ -88,7 +88,7 @@ export function sanitizeTwisterBuyIn(raw: unknown): number {
 const TURN_MS = 20_000;
 const BOT_THINK_MS = 800;
 /** Pausa fra una mano e l'altra: qui parte da sola. */
-const NEXT_HAND_MS = 2_500;
+const NEXT_HAND_MS = 4_500;
 
 /* ── Avversari ───────────────────────────────────────────── */
 
