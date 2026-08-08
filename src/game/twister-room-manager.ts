@@ -217,6 +217,16 @@ async function settle(playerId: PlayerId, result: TwisterResult): Promise<void> 
     console.error(`Accredito del premio fallito (${entry.sessionId}):`, error);
   }
 
+  // Il client non ha nessun altro modo di sapere che il torneo è
+  // finito: TableView descrive una mano, non una partita. Il premio
+  // viaggia nel testo, così non serve toccare il protocollo.
+  emitToPlayer(playerId, ServerEvent.TableClosed, {
+    reason:
+      premioUmano > 0
+        ? `${result.multiplier}× — hai vinto ${premioUmano.toLocaleString('it-IT')} Z-Coins`
+        : `${result.multiplier}× — nessun premio questa volta`,
+  });
+
   entry.cleanupTimer = setTimeout(() => {
     const corrente = games.get(playerId);
     if (corrente && corrente.settled) {
