@@ -254,7 +254,6 @@ export class TwisterRoom {
   }
 
   private vivi(): PlayerId[] {
-  private vivi(): PlayerId[] {
     return [...this.chips.entries()]
       .filter(([, c]) => c > 0)
       .map(([id]) => id);
