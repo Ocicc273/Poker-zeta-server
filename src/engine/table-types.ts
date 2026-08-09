@@ -136,6 +136,9 @@ export interface BlindStructure {
   ante: number;
 }
 
+/** Varianti di poker supportate dal motore. */
+export type Variant = 'holdem' | 'omaha';
+
 export interface TableConfig {
   /** Posti al tavolo. */
   maxSeats: number;
@@ -145,6 +148,12 @@ export interface TableConfig {
    * fino allo stack; 'pot-limit' limita al valore del piatto.
    */
   structure: 'no-limit' | 'pot-limit';
+  /**
+   * Variante giocata. Assente equivale a 'holdem': i tavoli
+   * esistenti non vanno toccati e continuano a comportarsi
+   * esattamente come prima.
+   */
+  variant?: Variant;
 }
 
 /* ────────────────────────────────────────────────────────────
