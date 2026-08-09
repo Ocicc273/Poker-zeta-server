@@ -43,6 +43,7 @@ import type {
   PlayerView,
   TableView,
 } from './protocol.js';
+import type { Variant } from '../engine/table-types.js';
 
 /* ── Avversari ───────────────────────────────────────────── */
 
@@ -87,6 +88,8 @@ export interface RoomOptions {
   humanPlayerId: PlayerId;
   humanName: string;
   buyIn: unknown;
+  /** Variante del tavolo. Assente equivale a Texas Hold'em. */
+  variant?: Variant;
   /**
    * Stack iniziale di ogni bot, nello stesso ordine di BOTS.
    *
@@ -151,7 +154,7 @@ export class Room {
     this.onHandComplete = options.onHandComplete;
 
     const buyIn = sanitizeBuyIn(options.buyIn);
-    const derived = deriveTableConfig(buyIn);
+    const derived = deriveTableConfig(buyIn, undefined, options.variant ?? 'holdem');
     this.config = derived.config;
     this.startingStack = derived.startingStack;
 
