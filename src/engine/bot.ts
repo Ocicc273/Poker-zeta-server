@@ -18,6 +18,7 @@
  */
 
 import { evaluateHand, HandCategory } from './hand-rank';
+import { evaluateOmahaHand } from './omaha';
 import type { Card } from './cards';
 import { ActionType, Street, type AvailableAction, type PlayerAction, type PlayerId } from './table-types';
 
@@ -68,52 +69,23 @@ const COMMIT_STRENGTH_BAR = 0.55;
    ──────────────────────────────────────────────────────────── */
 
 /**
- * Forza preflop di due carte, normalizzata 0-1.
- *
- * Valutazione euristica basata su tre fattori: valore delle carte,
- * presenza di una coppia servita, e potenziale di scala/colore.
- * Non è una tabella di equity calcolata: è una stima grossolana
- * sufficiente a far comportare il bot in modo non assurdo.
- */
-function preflopStrength(holeCards: readonly Card[]): number {
-  if (holeCards.length !== 2) return 0;
-
-  const [first, second] = holeCards as [Card, Card];
-  const high = Math.max(first.value, second.value);
-  const low = Math.min(first.value, second.value);
-
-  const isPair = first.value === second.value;
-  const isSuited = first.suit === second.suit;
-  const gap = high - low;
-
-  if (isPair) {
-    // Coppia servita: da 0.55 (coppia di 2) a 1.0 (assi).
-    return 0.55 + ((high - 2) / 12) * 0.45;
-  }
-
-  // Base sul valore della carta alta.
-  let strength = ((high - 2) / 12) * 0.45;
-
-  // La seconda carta contribuisce meno.
-  strength += ((low - 2) / 12) * 0.15;
-
-  // Stesso seme: potenziale colore.
-  if (isSuited) strength += 0.08;
-
-  // Carte connesse: potenziale scala. Il bonus svanisce col divario.
-  if (gap === 1) strength += 0.07;
-  else if (gap === 2) strength += 0.04;
-  else if (gap === 3) strength += 0.02;
-
-  return Math.min(0.95, strength);
-}
-
-/**
  * Forza post-flop, normalizzata 0-1.
  * Deriva direttamente dalla categoria della mano formata.
  */
 function postflopStrength(holeCards: readonly Card[], community: readonly Card[]): number {
-  const all = [...holeCards, ...community];
+  // A Omaha non si possono impilare nove carte nel valutatore: il
+  // vincolo 2+3 va risolto prima, e si valutano le cinque scelte.
+  const isOmaha = holeCards.length === 4;
+
+  if (isOmaha && community.length < 3) return preflopStrength(holeCards);
+
+  const all = isOmaha
+    ? (() => {
+        const best = evaluateOmahaHand(holeCards, community);
+        return [...best.usedHoleCards, ...best.usedCommunityCards];
+      })()
+    : [...holeCards, ...community];
+
   if (all.length < 5) return preflopStrength(holeCards);
 
   const rank = evaluateHand(all);
