@@ -186,6 +186,7 @@ io.on('connection', (socket) => {
         player.userId,
         player.username ?? 'Tu',
         payload?.buyIn,
+        payload?.variant,
       );
 
       if (reattached) {
