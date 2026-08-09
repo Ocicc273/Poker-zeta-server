@@ -265,7 +265,22 @@ export function startHand(
     deck,
   };
 }
-
+/**
+ * Importo massimo a cui un giocatore può portarsi in Pot Limit.
+ *
+ * La regola: si chiama, e poi si rilancia di quanto vale il piatto
+ * dopo quella chiamata. Quindi il tetto è la puntata corrente più
+ * il piatto attuale più l'importo da chiamare — il chiamato conta
+ * due volte, ed è la parte che quasi tutte le implementazioni
+ * sbagliano.
+ *
+ * Verifica con bui 5/10 heads-up: piatto 15, da chiamare 5, tetto
+ * 10 + 15 + 5 = 30.
+ */
+function potLimitMaxTo(state: HandState, player: PlayerState): number {
+  const toCall = Math.max(0, state.currentBet - player.committedThisStreet);
+  return state.currentBet + currentPotTotal(state) + toCall;
+}
 /* ────────────────────────────────────────────────────────────
    AZIONI DISPONIBILI
    ──────────────────────────────────────────────────────────── */
@@ -295,32 +310,39 @@ export function getAvailableActions(state: HandState): AvailableAction[] {
   } else if (player.stack > toCall) {
     actions.push({ type: ActionType.Call });
   }
-
-  // Raise minimo: la puntata corrente più l'ultimo aumento.
+   
+// Raise minimo: la puntata corrente più l'ultimo aumento.
   const minRaiseTo = state.currentBet + state.lastRaiseSize;
   const maxTo = player.committedThisStreet + player.stack;
 
+  // In Pot Limit il tetto è il piatto, in No Limit è lo stack.
+  const cap =
+    state.config.structure === 'pot-limit'
+      ? Math.min(maxTo, potLimitMaxTo(state, player))
+      : maxTo;
+
   if (state.currentBet === 0) {
     // Nessuna puntata: si può aprire.
-    const minBet = Math.min(state.config.blinds.bigBlind, maxTo);
-    if (maxTo > 0) {
+    if (cap > 0) {
       actions.push({
         type: ActionType.Bet,
-        minAmount: minBet,
-        maxAmount: maxTo,
+        minAmount: Math.min(state.config.blinds.bigBlind, cap),
+        maxAmount: cap,
       });
     }
-  } else if (maxTo > state.currentBet) {
+  } else if (cap > state.currentBet) {
     // C'è una puntata: si può rilanciare, purché si superi.
     actions.push({
       type: ActionType.Raise,
-      minAmount: Math.min(minRaiseTo, maxTo),
-      maxAmount: maxTo,
+      minAmount: Math.min(minRaiseTo, cap),
+      maxAmount: cap,
     });
   }
 
-  // All-in sempre disponibile con stack residuo.
-  if (player.stack > 0) {
+  // All-in: sempre in No Limit. In Pot Limit solo se lo stack sta
+  // sotto il tetto, oppure se non basta nemmeno a chiamare — quello
+  // è un call corto, non un rilancio, e resta sempre legale.
+  if (player.stack > 0 && (maxTo <= cap || maxTo <= state.currentBet)) {
     actions.push({ type: ActionType.AllIn, minAmount: maxTo, maxAmount: maxTo });
   }
 
@@ -427,6 +449,20 @@ export function applyAction(state: HandState, action: PlayerAction): HandState {
           `Importo ${targetTo} superiore allo stack disponibile (${maxTo}).`,
           action
         );
+      }
+      // Tetto del Pot Limit, controllato anche qui e non solo nelle
+      // azioni disponibili: il client propone, il motore dispone.
+      if (
+        state.config.structure === 'pot-limit' &&
+        targetTo > state.currentBet
+      ) {
+        const cap = potLimitMaxTo(state, player);
+        if (targetTo > cap) {
+          throw new InvalidActionError(
+            `Importo ${targetTo} oltre il tetto del piatto (${cap}).`,
+            action
+          );
+        }
       }
 
       if (targetTo <= state.currentBet && targetTo < maxTo) {
