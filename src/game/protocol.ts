@@ -44,7 +44,14 @@ export const ServerEvent = {
 
 export interface JoinTablePayload {
   buyIn: number;
+  /**
+   * Variante richiesta. Assente equivale a 'holdem': i client
+   * vecchi e ogni chiamata esistente continuano a sedersi a un
+   * tavolo di Texas Hold'em.
+   */
+  variant?: 'holdem' | 'omaha';
 }
+
 
 export interface JoinTwisterPayload {
   /** Verrà riportato al più vicino fra i sei livelli ammessi. */
@@ -133,7 +140,7 @@ export interface TableView {
    */
   tableId?: string;
   /** Che partita è: decide quale schermata il client deve mostrare. */
-  format?: 'cash' | 'twister' | 'private';
+  format?: 'cash' | 'twister' | 'private'| 'omaha';
   /** Solo nel Twister: il moltiplicatore estratto dal server. */
   twisterMultiplier?: number | null;
 }
