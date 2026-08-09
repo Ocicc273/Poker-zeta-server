@@ -12,6 +12,7 @@
  */
 
 import type { TableConfig } from '../engine/index.js';
+import type { Variant } from '../engine/table-types.js';
 import {
   HIGHEST_LEVEL,
   LOWEST_LEVEL,
@@ -79,6 +80,7 @@ export interface DerivedTable {
 export function deriveTableConfig(
   buyIn: number,
   maxSeats: number = MAX_SEATS,
+  variant: Variant = 'holdem',
 ): DerivedTable {
   const stake = resolveStakeLevel(buyIn);
 
@@ -90,7 +92,11 @@ export function deriveTableConfig(
         bigBlind: stake.bigBlind,
         ante: 0,
       },
-      structure: 'no-limit',
+      // La struttura discende dalla variante: l'Omaha è Pot Limit
+      // per definizione, e lasciarla scegliere a chi chiama
+      // significherebbe poter aprire un Omaha No Limit per errore.
+      structure: variant === 'omaha' ? 'pot-limit' : 'no-limit',
+      variant,
     },
     startingStack: Math.min(
       stake.maxBuyIn,
