@@ -67,7 +67,72 @@ const COMMIT_STRENGTH_BAR = 0.55;
 /* ────────────────────────────────────────────────────────────
    VALUTAZIONE DELLA FORZA
    ──────────────────────────────────────────────────────────── */
+/**
+ * Forza preflop di DUE carte, normalizzata 0-1.
+ *
+ * Valutazione euristica basata su tre fattori: valore delle carte,
+ * presenza di una coppia servita, e potenziale di scala/colore.
+ */
+function twoCardStrength(first: Card, second: Card): number {
+  const high = Math.max(first.value, second.value);
+  const low = Math.min(first.value, second.value);
 
+  const isPair = first.value === second.value;
+  const isSuited = first.suit === second.suit;
+  const gap = high - low;
+
+  if (isPair) {
+    // Coppia servita: da 0.55 (coppia di 2) a 1.0 (assi).
+    return 0.55 + ((high - 2) / 12) * 0.45;
+  }
+
+  let strength = ((high - 2) / 12) * 0.45;
+  strength += ((low - 2) / 12) * 0.15;
+
+  // Stesso seme: potenziale colore.
+  if (isSuited) strength += 0.08;
+
+  // Carte connesse: potenziale scala. Il bonus svanisce col divario.
+  if (gap === 1) strength += 0.07;
+  else if (gap === 2) strength += 0.04;
+  else if (gap === 3) strength += 0.02;
+
+  return Math.min(0.95, strength);
+}
+
+/**
+ * Quanto la migliore coppia di un Omaha viene ridimensionata.
+ *
+ * Con quattro carte si scelgono le due migliori fra sei
+ * combinazioni, quindi quasi ogni mano ne contiene una discreta.
+ * È la manopola da girare se i bot risultano troppo larghi.
+ */
+const OMAHA_PREFLOP_SCALE = 0.88;
+
+/**
+ * Forza preflop, normalizzata 0-1. Regge due o quattro carte.
+ *
+ * In Omaha si prende la migliore delle sei coppie ricavabili dalle
+ * quattro carte: approssimazione ruvida, ma sufficiente a far
+ * giocare il bot invece di farlo foldare sempre.
+ */
+function preflopStrength(holeCards: readonly Card[]): number {
+  if (holeCards.length === 2) {
+    return twoCardStrength(holeCards[0]!, holeCards[1]!);
+  }
+
+  if (holeCards.length !== 4) return 0;
+
+  let best = 0;
+  for (let i = 0; i < 4; i++) {
+    for (let j = i + 1; j < 4; j++) {
+      const value = twoCardStrength(holeCards[i]!, holeCards[j]!);
+      if (value > best) best = value;
+    }
+  }
+
+  return Math.min(0.95, best * OMAHA_PREFLOP_SCALE);
+}
 /**
  * Forza post-flop, normalizzata 0-1.
  * Deriva direttamente dalla categoria della mano formata.
