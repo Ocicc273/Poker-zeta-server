@@ -28,6 +28,7 @@ import {
   type Pot,
   type Payout,
 } from './pot';
+import { evaluateOmahaHand } from './omaha';
 import {
   ActionType,
   InvalidActionError,
@@ -225,9 +226,11 @@ export function startHand(
   players[sbIndex] = commit(players[sbIndex]!, config.blinds.smallBlind);
   players[bbIndex] = commit(players[bbIndex]!, config.blinds.bigBlind);
 
-  // Distribuzione: due carte a testa, una alla volta per giro,
-  // come al tavolo fisico.
-  for (let round = 0; round < 2; round++) {
+  // Distribuzione: due carte a testa, quattro in Omaha, una alla
+  // volta per giro come al tavolo fisico.
+  const holeCardCount = config.variant === 'omaha' ? 4 : 2;
+
+  for (let round = 0; round < holeCardCount; round++) {
     for (let i = 0; i < players.length; i++) {
       const index = (sbIndex + i) % players.length;
       const player = players[index]!;
@@ -646,13 +649,31 @@ function concludeUncontested(state: HandState, winnerId: PlayerId): HandState {
   };
 }
 
+/**
+ * Carte da consegnare ai pot per la valutazione dello showdown.
+ *
+ * In Omaha la mano legale è vincolata a 2 carte personali + 3
+ * comuni: si risolve qui e si passano ai pot le sole 5 carte
+ * effettivamente usate. Così pot.ts continua a valutare una
+ * normale mano di cinque carte e non deve sapere nulla della
+ * variante.
+ */
+function showdownCards(state: HandState, player: PlayerState): Card[] {
+  if (state.config.variant !== 'omaha') {
+    return [...player.holeCards, ...state.communityCards];
+  }
+
+  const best = evaluateOmahaHand(player.holeCards, state.communityCards);
+  return [...best.usedHoleCards, ...best.usedCommunityCards];
+}
+
 /** Conclude la mano con showdown e distribuzione dei pot. */
 function concludeShowdown(state: HandState): HandState {
   const pots = buildPots(collectContributions(state));
 
   const showdown = contestingPlayers(state.players).map((p) => ({
     playerId: p.playerId,
-    cards: [...p.holeCards, ...state.communityCards],
+    cards: showdownCards(state, p),
   }));
 
   const payouts = distributePots(
