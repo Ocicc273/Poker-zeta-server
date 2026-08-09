@@ -23,6 +23,7 @@ import {
 } from '../wallet/table-session.js';
 import { ServerEvent } from './protocol.js';
 import type { PlayerId } from '../engine/index.js';
+import type { Variant } from '../engine/table-types.js';
 
 /**
  * Quanto si tiene in vita un tavolo senza nessuno attaccato.
@@ -37,6 +38,8 @@ interface ActiveRoom {
   room: Room;
   sessionId: string;
   playerId: PlayerId;
+  /** Variante del tavolo aperto: serve a rifiutare un rientro sbagliato. */
+  variant: Variant;
   /** null quando nessun socket è collegato in questo momento. */
   socketId: string | null;
   abandonTimer: ReturnType<typeof setTimeout> | null;
@@ -90,10 +93,26 @@ export async function joinRoom(
   playerId: PlayerId,
   playerName: string,
   requestedBuyIn: unknown,
+  requestedVariant?: unknown,
 ): Promise<JoinResult> {
+  // La variante arriva dal client come qualsiasi altro dato:
+  // tutto ciò che non è esattamente 'omaha' è Hold'em.
+  const variant: Variant = requestedVariant === 'omaha' ? 'omaha' : 'holdem';
+
   const existing = rooms.get(playerId);
 
   if (existing) {
+    // Un tavolo aperto vince sulla richiesta nuova: le fiche sono
+    // già impegnate lì. Senza questo controllo si aprirebbe la
+    // schermata Omaha su una partita Hold'em, con due carte in mano.
+    if (existing.variant !== variant) {
+      throw new WalletError(
+        existing.variant === 'omaha'
+          ? 'Hai un tavolo Omaha aperto. Lascialo prima di sederti al Hold\'em.'
+          : 'Hai un tavolo Hold\'em aperto. Lascialo prima di sederti all\'Omaha.',
+      );
+    }
+
     cancelAbandonTimer(existing);
     existing.socketId = socketId;
     existing.room.resendState();
@@ -146,7 +165,12 @@ export async function joinRoom(
     humanName: playerName,
     buyIn,
     botStacks: Array.from({ length: BOT_COUNT }, () => perBot),
-    sendState: (view) => emitToPlayer(playerId, ServerEvent.TableState, view),
+    variant,
+    sendState: (view) =>
+      emitToPlayer(playerId, ServerEvent.TableState, {
+        ...view,
+        format: variant === 'omaha' ? 'omaha' : 'cash',
+      }),
     sendError: (message) =>
       emitToPlayer(playerId, ServerEvent.Error, { message }),
     onHandComplete: ({ won, chipsWon }) => {
@@ -169,6 +193,7 @@ export async function joinRoom(
     room,
     sessionId,
     playerId,
+    variant,  
     socketId,
     abandonTimer: null,
   });
