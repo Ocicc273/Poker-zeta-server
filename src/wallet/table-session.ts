@@ -139,6 +139,24 @@ export async function claimRestartFund(userId: string): Promise<number> {
   });
   return Number(result.granted ?? 0);
 }
+/**
+ * Riconciliazione all'avvio: annulla le sessioni rimaste aperte da
+ * un crash. Le stanze vivono in memoria, quindi all'avvio ogni
+ * sessione ancora aperta è per definizione orfana.
+ *
+ * NON solleva: un guasto qui non deve impedire al server di partire.
+ */
+export async function reconcileOrphanSessions(): Promise<number> {
+  try {
+    const result = await callWallet<{ reconciled?: number }>({
+      action: 'reconcile',
+    });
+    return Number(result.reconciled ?? 0);
+  } catch (error) {
+    console.error("Riconciliazione all'avvio fallita:", error);
+    return 0;
+  }
+}
 
 /** Registra il rake prelevato in una sessione. Solo misura. */
 export async function recordRake(
