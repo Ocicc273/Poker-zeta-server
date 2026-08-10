@@ -26,6 +26,7 @@ import * as engine from './engine/index.js';
 import {
   botStatus,
   claimRestartFund,
+  reconcileOrphanSessions,
   WalletError,
 } from './wallet/table-session.js';
 import {
@@ -451,6 +452,15 @@ io.on('connection', (socket) => {
     console.log(`Socket chiuso: ${player.userId} (${reason}) — tavolo in attesa`);
   });
 });
+// Prima di accettare socket: fiche rimaste fuori dal wallet dopo un
+// crash. Attesa e non lanciata in parallelo, altrimenti una sessione
+// aperta in questi millisecondi verrebbe annullata a tavolo vivo.
+const orfane = await reconcileOrphanSessions();
+console.log(
+  orfane > 0
+    ? `Riconciliazione: ${orfane} sessioni annullate e rimborsate.`
+    : 'Riconciliazione: nessuna sessione orfana.',
+);
 
 httpServer.listen(env.PORT, () => {
   console.log(
