@@ -119,6 +119,7 @@ const httpServer = createServer((req, res) => {
         auth: 'enabled',
         engine: engineExports,
         wallet: 'enabled',
+        statusKey: env.STATUS_KEY !== '',
         rooms: activeRoomCount(),
         waiting: waitingRoomCount(),
         twisters: activeTwisterCount(),
