@@ -31,6 +31,13 @@ export const env = {
   WALLET_FUNCTION_URL: `${SUPABASE_URL}/functions/v1/table-session`,
 
   /**
+   * Endpoint della Edge Function che muove gli XP (PZ Journey).
+   * Sta separata da quella del wallet di proposito: sono due materie
+   * diverse, con due superfici d'attacco diverse.
+   */
+  PROGRESS_FUNCTION_URL: `${SUPABASE_URL}/functions/v1/progress`,
+
+  /**
    * Segreto condiviso con la Edge Function. È l'unica credenziale
    * privilegiata che vive qui: non dà accesso al database, solo
    * il permesso di aprire e chiudere sessioni di tavolo.

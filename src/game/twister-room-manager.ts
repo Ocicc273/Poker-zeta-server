@@ -34,6 +34,8 @@ import {
   WalletError,
 } from '../wallet/table-session.js';
 
+import { inviaProgresso } from '../journey/progress.js';
+
 import { ServerEvent } from './protocol.js';
 import type { PlayerId } from '../engine/index.js';
 
@@ -175,6 +177,16 @@ async function settle(playerId: PlayerId, result: TwisterResult): Promise<void> 
 
   const premioUmano =
     result.prizes.find((p) => p.playerId === playerId)?.zCoins ?? 0;
+
+  // PZ Journey. Il Twister è una partita sola, non una serie di
+  // mani: l'evento è uno e si manda qui, dove si sa se ha vinto.
+  // L'identificatore è la sessione, che si liquida una volta sola.
+  void inviaProgresso({
+    eventId: `${entry.sessionId}-twister`,
+    userId: playerId,
+    mode: 'twister',
+    twisterWon: premioUmano > 0,
+  });
 
   // Le quote dei bot non sono premi: sono fiche del pool.
   const quoteBot = result.prizes

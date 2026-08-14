@@ -21,6 +21,7 @@ import {
   returnToBotPool,
   WalletError,
 } from '../wallet/table-session.js';
+import { inviaProgresso } from '../journey/progress.js';
 import { ServerEvent } from './protocol.js';
 import type { PlayerId } from '../engine/index.js';
 import type { Variant } from '../engine/table-types.js';
@@ -38,6 +39,8 @@ interface ActiveRoom {
   room: Room;
   sessionId: string;
   playerId: PlayerId;
+  /** Quanto è entrato: serve a sapere, all'uscita, se si alza in utile. */
+  buyIn: number;
   /** Variante del tavolo aperto: serve a rifiutare un rientro sbagliato. */
   variant: Variant;
   /** null quando nessun socket è collegato in questo momento. */
@@ -159,6 +162,9 @@ export async function joinRoom(
     await returnToBotPool(resto, 'table_remainder').catch(() => undefined);
   }
 
+  /** Numero d'ordine della mano dentro questa sessione (PZ Journey). */
+  let maniDellaSessione = 0;
+
   const options: RoomOptions = {
     roomId: `room-${playerId}`,
     humanPlayerId: playerId,
@@ -184,6 +190,22 @@ export async function joinRoom(
           void recordMissionEvent(playerId, 'chips_won', chipsWon);
         }
       }
+
+      // PZ Journey. Il contatore vive qui dentro e non riparte
+      // finché la sessione è aperta: è quello che rende
+      // l'identificatore stabile fra un tentativo e il suo
+      // ritentativo. Se il server ripartisse a metà sessione il
+      // contatore ricomincerebbe e i primi eventi verrebbero
+      // scartati come doppioni — si perde dell'XP, non se ne
+      // raddoppia: è il verso giusto in cui sbagliare.
+      maniDellaSessione += 1;
+      void inviaProgresso({
+        eventId: `${sessionId}-m${maniDellaSessione}`,
+        userId: playerId,
+        mode: variant === 'omaha' ? 'omaha' : 'holdem',
+        handsPlayed: 1,
+        handsWon: won ? 1 : 0,
+      });
     },
   };
 
@@ -193,7 +215,8 @@ export async function joinRoom(
     room,
     sessionId,
     playerId,
-    variant,  
+    buyIn,
+    variant,
     socketId,
     abandonTimer: null,
   });
@@ -248,6 +271,19 @@ export async function closeRoom(playerId: PlayerId): Promise<number | null> {
 
   const finalStack = entry.room.humanStack();
   entry.room.close();
+
+  // PZ Journey: alzarsi in utile è l'unica cosa che si può sapere
+  // solo adesso. L'identificatore non porta un numero di mano
+  // perché la sessione si chiude una volta sola — se la chiamata
+  // venisse ritentata, sarebbe lo stesso evento.
+  if (finalStack > entry.buyIn) {
+    void inviaProgresso({
+      eventId: `${entry.sessionId}-fine`,
+      userId: playerId,
+      mode: entry.variant === 'omaha' ? 'omaha' : 'holdem',
+      leftInProfit: true,
+    });
+  }
 // Le fiche rimaste ai bot tornano nel pool. Va fatto anche se il
   // riaccredito del giocatore fallisce: sono due contabilità
   // separate e una non deve trascinare l'altra.
