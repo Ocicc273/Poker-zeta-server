@@ -49,6 +49,8 @@ import {
   joinRoom,
   waitingRoomCount,
 } from './game/room-manager.js';
+import { BOT_COUNT } from './game/room.js';
+import { MAX_SEATS } from './game/table-config.js';
 import {
   activeTwisterCount,
   closeAllTwisterRooms,
@@ -121,6 +123,15 @@ const httpServer = createServer((req, res) => {
         engine: engineExports,
         wallet: 'enabled',
         statusKey: env.STATUS_KEY !== '',
+        // QUANTI SI SIEDONO, SECONDO IL CODICE CHE GIRA ADESSO.
+        //
+        // Serve a rispondere da fuori a una domanda che prima non
+        // aveva risposta: il server che sta girando è quello nuovo?
+        // Senza questi due numeri l'unico modo di saperlo era aprire
+        // un tavolo e contare le sedie, e per due volte abbiamo
+        // creduto pubblicata una modifica che non c'era.
+        botsPerTable: BOT_COUNT,
+        seats: MAX_SEATS,
         rooms: activeRoomCount(),
         waiting: waitingRoomCount(),
         twisters: activeTwisterCount(),
