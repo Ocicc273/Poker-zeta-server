@@ -99,8 +99,12 @@ interface BotDefinition {
   seat: number;
 }
 
+// Restano due: il Twister è un tre giocatori, non un tavolo pieno.
+// Tricky si chiama Zun Zun da agosto 2026, e qui il nome conta
+// davvero perché è quello che il client cerca in FACES per sapere che
+// faccia sedere.
 const BOTS: readonly BotDefinition[] = [
-  { playerId: 'bot-1', name: 'Tricky', profile: 'loose', seat: 1 },
+  { playerId: 'bot-1', name: 'Zun Zun', profile: 'loose', seat: 1 },
   { playerId: 'bot-2', name: 'Boss', profile: 'tight', seat: 2 },
 ];
 

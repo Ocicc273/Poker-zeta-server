@@ -1,0 +1,17 @@
+# Le dipendenze le installa Railway da package.json: qui dentro sono
+# millecento file che non appartengono al repo. Senza questo file un
+# `git add -A` se le porta via tutte, ed è già successo.
+node_modules/
+
+# Il compilato non si versiona: si rigenera.
+dist/
+build/
+
+# I segreti non entrano mai nel repo. Il server ne ha di veri
+# (MATCH_SERVER_SECRET, la service_role key): vivono nelle Variables
+# di Railway e non altrove.
+.env
+.env.*
+
+*.log
+.DS_Store

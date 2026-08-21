@@ -54,13 +54,42 @@ interface BotDefinition {
   seat: number;
 }
 
+/**
+ * I NOMI NON SONO A CASO: ognuno deve avere una faccia nella tabella
+ * FACES del client, dentro TableScene, se no il tavolo si riempie di
+ * gente senza volto. Don Duck porta la faccia di Boss.
+ *
+ * Cinque perché sei sono le poltrone disegnate nella sala e una la
+ * occupa chi guarda. Ogni bot in più fa pescare di più dal bankroll
+ * dei bot a ogni tavolo aperto: il pool è finito e se non basta il
+ * tavolo viene rifiutato col buy-in rimborsato, quindi non si
+ * stampano fiche — ma i tavoli alti diventano più facili da negare.
+ */
 const BOTS: readonly BotDefinition[] = [
   { playerId: 'bot-1', name: 'Giarack', profile: 'tight', seat: 1 },
   { playerId: 'bot-2', name: 'Don Duck', profile: 'loose', seat: 2 },
+  { playerId: 'bot-3', name: 'Zena', profile: 'balanced', seat: 3 },
+  { playerId: 'bot-4', name: 'Zun Zun', profile: 'loose', seat: 4 },
+  { playerId: 'bot-5', name: 'Shyvana', profile: 'tight', seat: 5 },
 ];
 
 /** Quanti avversari siedono al tavolo. Serve al gestore delle stanze. */
 export const BOT_COUNT = BOTS.length;
+
+/**
+ * I posti dichiarati e i bot davvero seduti devono coincidere.
+ *
+ * Meglio non partire che partire storto: MAX_SEATS è rimasto a 3
+ * mentre le poltrone erano sei, e il tavolo si apriva con due
+ * avversari senza che niente lo dicesse. Un errore all'avvio si vede
+ * subito nei log di Railway; un tavolo mezzo vuoto no.
+ */
+if (BOT_COUNT + 1 !== MAX_SEATS) {
+  throw new Error(
+    `Posti al tavolo incoerenti: MAX_SEATS è ${MAX_SEATS} ma i bot ` +
+      `sono ${BOT_COUNT}. Uno dei due è rimasto indietro.`,
+  );
+}
 
 /**
  * Pausa prima di ogni azione dei bot.

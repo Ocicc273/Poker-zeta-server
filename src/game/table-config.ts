@@ -21,12 +21,17 @@ import {
 } from './stakes.js';
 
 /**
- * Posti al tavolo contro i bot: 1 umano + 2 bot.
+ * Posti al tavolo contro i bot: 1 umano + 5 bot.
  *
- * Resta 3 perché i BOTS in room.ts sono due. Non è il limite del
- * motore, che regge fino a MAX_SEATS_PRIVATE.
+ * DEVE COMBACIARE CON I BOTS IN room.ts, che se ne accorge da solo:
+ * lì c'è un controllo che rifiuta di avviare il server se i due
+ * numeri divergono. Non è pignoleria — questa costante è rimasta a 3
+ * mentre le poltrone disegnate erano sei, e il tavolo si apriva con
+ * due avversari senza che niente lo segnalasse.
+ *
+ * Non è il limite del motore, che regge fino a MAX_SEATS_PRIVATE.
  */
-export const MAX_SEATS = 3;
+export const MAX_SEATS = 6;
 
 /**
  * Posti di un tavolo privato.
