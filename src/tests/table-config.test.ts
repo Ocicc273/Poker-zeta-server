@@ -13,10 +13,13 @@ import assert from 'node:assert/strict';
 
 import {
   MAX_BUY_IN,
+  MAX_SEATS,
+  MAX_SEATS_PRIVATE,
   MIN_BUY_IN,
   deriveTableConfig,
   sanitizeBuyIn,
 } from '../game/table-config.js';
+import { BOT_COUNT } from '../game/room.js';
 
 import {
   HOLDEM_STAKES,
@@ -162,8 +165,33 @@ test('tavolo: il livello viene restituito insieme alla configurazione', () => {
   assert.equal(deriveTableConfig(20_000).stake.level, 2);
 });
 
-test('tavolo: i posti sono tre', () => {
-  assert.equal(deriveTableConfig(10_000).config.maxSeats, 3);
+/**
+ * I posti sono sei, ma non è il sei che conta: conta che i posti
+ * dichiarati siano esattamente i bot più chi guarda.
+ *
+ * Prima qui c'era scritto `3` a mano. Quando i bot sono passati da
+ * due a cinque, questo test è diventato l'unica cosa che teneva il
+ * tavolo piccolo — e siccome faceva fallire la build, il server
+ * continuava a girare con la versione vecchia mentre noi cercavamo
+ * l'errore nel client. Legandolo a BOT_COUNT non può più succedere:
+ * o i due numeri concordano, o il test dice quale dei due è rimasto
+ * indietro.
+ */
+test('tavolo: i posti sono i bot più chi guarda', () => {
+  assert.equal(MAX_SEATS, BOT_COUNT + 1);
+  assert.equal(deriveTableConfig(10_000).config.maxSeats, BOT_COUNT + 1);
+});
+
+/**
+ * Sei sono le poltrone disegnate nella sala. Non è una preferenza:
+ * un settimo giocatore non avrebbe dove sedersi, e le SEATS del
+ * client sono misurate su quelle sei.
+ */
+test('tavolo: i posti non superano le poltrone disegnate', () => {
+  assert.ok(
+    MAX_SEATS <= MAX_SEATS_PRIVATE,
+    `${MAX_SEATS} posti ma le poltrone disegnate sono ${MAX_SEATS_PRIVATE}`,
+  );
 });
 
 // Minimi d'ingresso REALI: sotto queste cifre la
