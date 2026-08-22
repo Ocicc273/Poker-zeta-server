@@ -246,6 +246,30 @@ export function startHand(
   const firstToActIndex = headsUp ? sbIndex : (bbIndex + 1) % players.length;
   const firstToAct = players[firstToActIndex]!;
 
+  /**
+   * CHI TOCCA DAVVERO, SALTANDO CHI È GIÀ ALL-IN.
+   *
+   * Prima qui si guardava SOLO il primo di parola: se non era
+   * attivo, il turno restava null e la mano si piantava senza che
+   * nessuno potesse agire.
+   *
+   * Non è un caso di scuola. Basta uno stack più corto del buio —
+   * un giocatore rimasto con 43.000 a un tavolo da 100.000/200.000 —
+   * perché chi posta il buio finisca all-in prima ancora di parlare.
+   * Se quello è anche il primo di parola, il tavolo si blocca.
+   *
+   * `nextToAct` fa già il giro saltando chi non può agire; qui si
+   * riparte dal posto PRECEDENTE al primo, così se il primo è attivo
+   * resta lui e non si salta il suo turno.
+   */
+  const attivi = actingPlayers(players);
+  const primoDavvero =
+    attivi.length === 0
+      ? null
+      : firstToAct.status === PlayerStatus.Active
+        ? firstToAct
+        : nextToAct(players, firstToAct.seat);
+
   return {
     handId,
     config,
@@ -253,8 +277,7 @@ export function startHand(
     players,
     communityCards: [],
     dealerSeat,
-    toActPlayerId:
-      firstToAct.status === PlayerStatus.Active ? firstToAct.playerId : null,
+    toActPlayerId: primoDavvero?.playerId ?? null,
     currentBet: config.blinds.bigBlind,
     // Il big blind conta come primo "raise": il minimo successivo
     // è di pari entità.
