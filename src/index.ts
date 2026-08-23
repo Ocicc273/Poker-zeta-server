@@ -486,6 +486,45 @@ httpServer.listen(env.PORT, () => {
  * lasciare traccia: qui viene registrata prima che Railway riavvii
  * il container, così nei log resta il motivo.
  */
+/**
+ * SPEGNIMENTO PULITO, ED È UNA FALLA CHE COSTAVA FICHE VERE.
+ *
+ * `closeAllRooms` esisteva già, col commento che diceva a cosa
+ * serviva — «serve allo spegnimento del processo» — ma non la
+ * chiamava nessuno. Risultato: ogni riavvio di Railway uccideva le
+ * stanze aperte, e le fiche che i bot avevano davanti non tornavano
+ * mai nel loro bankroll.
+ *
+ * Non è teoria: al 23 agosto 2026 il registro conta 158 tavoli
+ * aperti e solo 94 chiusi. Sessantaquattro tavoli hanno preso fiche
+ * dal pool e non ne hanno restituita nessuna — e ogni pubblicazione
+ * del server ne aggiungeva altri, perché ogni pubblicazione è un
+ * riavvio.
+ *
+ * Railway manda SIGTERM e aspetta prima di uccidere: quel tempo
+ * basta a chiudere le stanze e rimettere a posto la contabilità.
+ */
+let spegnendo = false;
+
+async function spegni(segnale: string): Promise<void> {
+  // Un secondo segnale mentre si sta già chiudendo non deve far
+  // partire una seconda chiusura sulle stesse stanze.
+  if (spegnendo) return;
+  spegnendo = true;
+
+  console.log(`${segnale}: chiudo le stanze aperte…`);
+  try {
+    await closeAllRooms();
+    console.log('Stanze chiuse, fiche restituite.');
+  } catch (error) {
+    console.error('Chiusura delle stanze fallita:', error);
+  }
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => void spegni('SIGTERM'));
+process.on('SIGINT', () => void spegni('SIGINT'));
+
 process.on('uncaughtException', (error) => {
   console.error('Eccezione non gestita:', error);
 });
