@@ -21,6 +21,10 @@
 import { createServer } from 'node:http';
 import { Server } from 'socket.io';
 import { env } from './config/env.js';
+import { TournamentService } from './game/tournament-service.js';
+import { TournamentEvent, type TournamentAction, type TournamentReply } from './game/tournament-protocol.js';
+import { tournamentStore } from './wallet/tournament.js';
+import { SeatGate } from './game/seat-gate.js';
 import { verifyAccessToken } from './auth/verify-token.js';
 import * as engine from './engine/index.js';
 import {
@@ -159,6 +163,25 @@ configureRoomManager(io);
 configureTwisterManager(io);
 configurePrivateRoomManager(io);
 
+const tournaments = new TournamentService(tournamentStore);
+const seatGate = new SeatGate();
+let tournamentTickPending = false;
+const tournamentTimer = setInterval(() => {
+  if (tournamentTickPending) return;
+  tournamentTickPending = true;
+  void tournaments.tick().finally(() => { tournamentTickPending = false; });
+}, 500);
+async function closeAllTournaments(): Promise<void> {
+  clearInterval(tournamentTimer);
+  await tournaments.shutdown();
+}
+function enterNonTournament<T>(userId: string, job: () => T | Promise<T>): Promise<T> {
+  return seatGate.run(userId, () => {
+    if (shuttingDown || tournaments.hasPlayer(userId)) throw new WalletError('Hai un torneo in corso oppure il server si sta riavviando.');
+    return job();
+  });
+}
+
 io.use(async (socket, next) => {
   const token = socket.handshake.auth?.token;
 
@@ -183,6 +206,23 @@ io.on('connection', (socket) => {
   console.log(`Giocatore autenticato: ${label} [${player.userId}]`);
   socket.emit(ServerEvent.Welcome, player);
 
+  const tournamentRequest = (job: () => Promise<void>, reply?: (result: TournamentReply) => void) => {
+    void job().then(() => { if (typeof reply === 'function') reply({ ok: true }); })
+      .catch((error: unknown) => { if (typeof reply === 'function') reply({ ok: false,
+        error: error instanceof Error ? error.message : 'Torneo non disponibile.' }); });
+  };
+  socket.on(TournamentEvent.Watch, (_: unknown, reply) => tournamentRequest(() =>
+    tournaments.watch(socket.id, player.userId, state => socket.emit(TournamentEvent.State, state)), reply));
+  socket.on(TournamentEvent.Join, (payload, reply) => tournamentRequest(() => seatGate.run(player.userId, async () => {
+    if (shuttingDown || getRoomByPlayer(player.userId) || getTwisterByPlayer(player.userId) || getPrivateTableByPlayer(player.userId)) {
+      throw new Error('Chiudi il tavolo attuale prima di iscriverti al torneo.');
+    }
+    await tournaments.join(payload?.id, player.userId, player.username ?? 'Giocatore');
+  }), reply));
+  socket.on(TournamentEvent.Leave, (payload, reply) => tournamentRequest(() => tournaments.leave(payload?.id, player.userId), reply));
+  socket.on(TournamentEvent.Next, (payload, reply) => tournamentRequest(() => tournaments.next(payload?.id), reply));
+  socket.on(TournamentEvent.Action, (payload: TournamentAction, reply) => tournamentRequest(() => tournaments.action(player.userId, payload), reply));
+
   socket.on(ClientEvent.JoinTable, async (payload: JoinTablePayload) => {
     // Un Twister in corso non si può abbandonare: il buy-in è già
     // speso e il piazzamento si decide giocando.
@@ -194,13 +234,13 @@ io.on('connection', (socket) => {
     }
 
     try {
-      const { reattached } = await joinRoom(
+      const { reattached } = await enterNonTournament(player.userId, () => joinRoom(
         socket.id,
         player.userId,
         player.username ?? 'Tu',
         payload?.buyIn,
         payload?.variant,
-      );
+      ));
 
       if (reattached) {
         console.log(`${label} è rientrato al tavolo`);
@@ -238,12 +278,12 @@ io.on('connection', (socket) => {
     }
 
     try {
-      const { reattached, room } = await joinTwister(
+      const { reattached, room } = await enterNonTournament(player.userId, () => joinTwister(
         socket.id,
         player.userId,
         player.username ?? 'Tu',
         payload?.buyIn,
-      );
+      ));
 
       // A differenza del cash la partita si avvia dentro
       // joinTwister: il moltiplicatore va annunciato prima della
@@ -374,7 +414,7 @@ io.on('connection', (socket) => {
     ClientEvent.CreatePrivateTable,
     async (payload: CreatePrivateTablePayload) => {
       try {
-        const code = await createPrivateTable(
+        const code = await enterNonTournament(player.userId, () => createPrivateTable(
           socket.id,
           player.userId,
           player.username ?? 'Tu',
@@ -384,7 +424,7 @@ io.on('connection', (socket) => {
             rakePercent: payload?.rakePercent,
             startingStack: payload?.startingStack,
           },
-        );
+        ));
 
         // Solo a chi ospita: è lui che deve condividerlo.
         socket.emit(ServerEvent.PrivateTableCreated, { code });
@@ -403,14 +443,14 @@ io.on('connection', (socket) => {
 
   socket.on(
     ClientEvent.JoinPrivateTable,
-    (payload: JoinPrivateTablePayload) => {
+    async (payload: JoinPrivateTablePayload) => {
       try {
-        joinPrivateTable(
+        await enterNonTournament(player.userId, () => joinPrivateTable(
           socket.id,
           payload?.code,
           player.userId,
           player.username ?? 'Tu',
-        );
+        ));
         console.log(`${label} è entrato nel tavolo privato`);
       } catch (error) {
         // Codice sbagliato e tavolo pieno sono risposte legittime,
@@ -451,6 +491,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', (reason) => {
+    tournaments.disconnect(socket.id);
     // Nessun riaccredito qui: il tavolo cash resta in attesa, e
     // solo se il giocatore non torna verrà chiuso dal timer di
     // abbandono. Nel Twister non stacca niente: la partita
@@ -536,6 +577,7 @@ async function shutdown(signal: string): Promise<void> {
       closeAllRooms(),
       closeAllTwisterRooms(),
       closeAllPrivateTables(),
+      closeAllTournaments(),
     ]);
     console.log(`Tavoli chiusi in ${Date.now() - startedAt} ms.`);
   } catch (error) {

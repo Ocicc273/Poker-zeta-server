@@ -629,6 +629,12 @@ function advance(state: HandState, lastActorSeat: number): HandState {
  * Chiude la street corrente e apre la successiva, scoprendo le
  * carte comuni previste.
  */
+/** Solo per l'avvio di una mano: tutti all-in nei bui devono arrivare allo showdown. */
+export function runOutForcedAllIn(state: HandState): HandState {
+  return state.toActPlayerId === null && actingPlayers(state.players).length === 0 &&
+    !isHandComplete(state) ? openNextStreet(state) : state;
+}
+
 function openNextStreet(state: HandState): HandState {
   const upcoming = nextStreet(state.street);
 

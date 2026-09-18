@@ -140,7 +140,7 @@ export interface TableView {
    */
   tableId?: string;
   /** Che partita è: decide quale schermata il client deve mostrare. */
-  format?: 'cash' | 'twister' | 'private'| 'omaha';
+  format?: 'cash' | 'twister' | 'private'| 'omaha' | 'tournament';
   /** Solo nel Twister: il moltiplicatore estratto dal server. */
   twisterMultiplier?: number | null;
 }

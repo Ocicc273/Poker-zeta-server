@@ -16,6 +16,7 @@ function harness() {
   const cash = deferred();
   const twister = deferred();
   const privateTables = deferred();
+  const tournaments = deferred();
   const calls = { cash: 0, twister: 0, privateTables: 0, io: 0, http: 0, timers: 0, exits: 0 };
   const listeners = new Map<string, () => void>();
   const context = createContext({
@@ -26,6 +27,7 @@ function harness() {
     closeAllRooms: () => { calls.cash++; return cash.promise; },
     closeAllTwisterRooms: () => { calls.twister++; return twister.promise; },
     closeAllPrivateTables: () => { calls.privateTables++; return privateTables.promise; },
+    closeAllTournaments: () => tournaments.promise,
     io: { close: () => { calls.io++; } },
     httpServer: { close: (done: () => void) => { calls.http++; done(); } },
     process: {
@@ -41,7 +43,7 @@ function harness() {
     'async function shutdown(signal)',
   );
   runInContext(coordinator, context);
-  return { cash, twister, privateTables, calls, listeners, context };
+  return { cash, twister, privateTables, tournaments, calls, listeners, context };
 }
 
 test('shutdown: un solo gestore per SIGTERM e SIGINT', () => {
@@ -70,6 +72,9 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     assert.equal(h.calls.exits, 0);
 
     h.privateTables.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(h.calls.io, 0);
+    h.tournaments.resolve();
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(h.calls.io, 1);
     assert.equal(h.calls.http, 1);

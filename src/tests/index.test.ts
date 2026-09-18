@@ -18,3 +18,5 @@ import './pot.test.js';
 import './showdown.test.js';
 import './rake.test.js';
 import './shutdown.test.js';
+import './tournament.test.js';
+import './omaha.test.js';
