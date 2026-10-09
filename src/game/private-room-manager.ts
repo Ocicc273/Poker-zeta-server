@@ -52,6 +52,7 @@ interface ActiveTable {
   startingStack: number;
   stakeLevel: number;
   maxSeats: number;
+  requestId?: string;
 }
 
 const tables = new Map<string, ActiveTable>();
@@ -85,6 +86,18 @@ function emitToPlayer(
   io.to(socketId).emit(event, payload);
 }
 
+function bindSocket(playerId: PlayerId, socketId: string): void {
+  const previous = socketByPlayer.get(playerId);
+  if (previous !== undefined && previous !== socketId && io) {
+    const socket = io.sockets.sockets.get(previous);
+    socket?.emit(ServerEvent.TableClosed, {
+      reason: 'Sessione privata sostituita da un nuovo collegamento.',
+    });
+    socket?.disconnect(true);
+  }
+  socketByPlayer.set(playerId, socketId);
+}
+
 function cancelAbandonTimer(playerId: PlayerId): void {
   const timer = abandonTimers.get(playerId);
   if (timer !== undefined) {
@@ -102,10 +115,12 @@ function forgetPlayer(playerId: PlayerId): void {
 /* ── Creazione ───────────────────────────────────────────── */
 
 export interface CreateTableRequest {
+  requestId?: unknown;
   stakeLevel: unknown;
   maxSeats: unknown;
   rakePercent: unknown;
   startingStack: unknown;
+  manualStart?: unknown;
 }
 
 function intero(value: unknown, fallback: number): number {
@@ -149,6 +164,11 @@ export async function createTable(
     MAX_STACK,
     Math.max(MIN_STACK, intero(request.startingStack, stake.bigBlind * 100)),
   );
+  const requestId =
+    typeof request.requestId === 'string' && request.requestId.length > 0
+      ? request.requestId.slice(0, 80)
+      : undefined;
+  const manualStart = request.manualStart === true;
 
   // Il codice arriva dal database: se questa fallisce, non deve
   // esistere nessun tavolo in memoria.
@@ -157,6 +177,7 @@ export async function createTable(
     stake.level,
     startingStack,
     maxSeats,
+    requestId,
   );
 
   const room = new PrivateRoom({
@@ -173,6 +194,8 @@ export async function createTable(
     buyIn: stake.maxBuyIn,
     maxSeats,
     rakePercent,
+    startingStack,
+    manualStart,
     sendState: (playerId, view) =>
       emitToPlayer(playerId, ServerEvent.TableState, view),
     sendError: (playerId, message) =>
@@ -195,9 +218,10 @@ export async function createTable(
     startingStack,
     stakeLevel: stake.level,
     maxSeats,
+    requestId,
   });
 
-  socketByPlayer.set(hostId, socketId);
+  bindSocket(hostId, socketId);
   codeByPlayer.set(hostId, code);
 
   room.siediti(hostId, hostName, startingStack);
@@ -243,7 +267,7 @@ export function joinTable(
     );
   }
 
-  socketByPlayer.set(playerId, socketId);
+  bindSocket(playerId, socketId);
   cancelAbandonTimer(playerId);
 
   if (entry.room.eSeduto(playerId)) {
@@ -289,6 +313,14 @@ export function rechargePlayer(
   return entry.room.ricarica(requesterId, targetId, amount);
 }
 
+export function startPrivateTable(playerId: PlayerId): boolean {
+  const code = codeByPlayer.get(playerId);
+  if (code === undefined) return false;
+  const entry = tables.get(code);
+  if (!entry) return false;
+  return entry.room.avviaDaHost(playerId);
+}
+
 /* ── Uscita ──────────────────────────────────────────────── */
 
 /**
@@ -298,16 +330,27 @@ export function rechargePlayer(
  * esiste, e spariscono con lui. È la conseguenza voluta
  * dell'economia separata.
  */
-export function leaveTable(playerId: PlayerId): void {
+export function leaveTable(playerId: PlayerId): boolean {
   const code = codeByPlayer.get(playerId);
+  const socketId = socketByPlayer.get(playerId);
   forgetPlayer(playerId);
-  if (code === undefined) return;
+  if (code === undefined) return true;
 
   const entry = tables.get(code);
-  if (!entry) return;
+  if (!entry) return true;
+
+  if (entry.hostId === playerId) {
+    void dismissTable(code);
+    return true;
+  }
 
   // Se era l'ultimo, alzati chiama onEmpty che porta a dismissTable.
-  entry.room.alzati(playerId);
+  if (!entry.room.alzati(playerId)) {
+    codeByPlayer.set(playerId, code);
+    if (socketId !== undefined) socketByPlayer.set(playerId, socketId);
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -326,6 +369,11 @@ export function detachPrivateSocket(
 
   socketByPlayer.delete(playerId);
   cancelAbandonTimer(playerId);
+
+  const code = codeByPlayer.get(playerId);
+  if (code !== undefined) {
+    tables.get(code)?.room.disconnetti(playerId);
+  }
 
   const timer = setTimeout(() => {
     abandonTimers.delete(playerId);
@@ -350,6 +398,11 @@ async function dismissTable(code: string): Promise<void> {
   if (!entry) return;
 
   tables.delete(code);
+  for (const playerId of entry.room.playerIds()) {
+    emitToPlayer(playerId, ServerEvent.TableClosed, {
+      reason: 'Tavolo privato chiuso.',
+    });
+  }
   entry.room.close();
 
   // Chiunque risultasse ancora legato a questo codice va liberato,

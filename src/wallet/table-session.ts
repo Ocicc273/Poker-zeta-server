@@ -263,6 +263,7 @@ export async function openPrivateTable(
   stakeLevel: number,
   buyIn: number,
   maxSeats: number,
+  requestId?: string,
 ): Promise<string> {
   const result = await callWallet<{ code?: string }>({
     action: 'private-open',
@@ -270,6 +271,7 @@ export async function openPrivateTable(
     stakeLevel: Math.max(1, Math.floor(stakeLevel)),
     buyIn: Math.max(1, Math.floor(buyIn)),
     maxSeats: Math.max(2, Math.floor(maxSeats)),
+    requestId,
   });
 
   if (typeof result.code !== 'string') {

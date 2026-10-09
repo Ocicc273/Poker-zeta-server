@@ -76,6 +76,7 @@ import {
   privatePlayerCount,
   PrivateTableError,
   rechargePlayer,
+  startPrivateTable,
 } from './game/private-room-manager.js';
 
 interface ConnectedPlayer {
@@ -423,6 +424,8 @@ io.on('connection', (socket) => {
             maxSeats: payload?.maxSeats,
             rakePercent: payload?.rakePercent,
             startingStack: payload?.startingStack,
+            requestId: payload?.requestId,
+            manualStart: payload?.manualStart,
           },
         ));
 
@@ -465,13 +468,40 @@ io.on('connection', (socket) => {
     },
   );
 
-  socket.on(ClientEvent.LeavePrivateTable, () => {
+  socket.on(ClientEvent.StartPrivateTable, () => {
+    const partita = getPrivateTableByPlayer(player.userId);
+    if (!partita) {
+      socket.emit(ServerEvent.Error, { message: 'Nessun tavolo privato attivo.' });
+      return;
+    }
+    if (partita.giocatoriConnessi() < 2) {
+      socket.emit(ServerEvent.Error, {
+        message: 'Servono almeno due giocatori collegati per iniziare.',
+      });
+      return;
+    }
+    if (!startPrivateTable(player.userId)) {
+      socket.emit(ServerEvent.Error, {
+        message: 'Solo chi ospita può avviare il tavolo privato.',
+      });
+    }
+  });
+
+  socket.on(ClientEvent.LeavePrivateTable, (reply?: (result: { ok: boolean }) => void) => {
     // Nessun riaccredito: le fiche del privato non sono mai uscite
     // da un wallet e non ci tornano.
-    leavePrivateTable(player.userId);
+    const left = leavePrivateTable(player.userId);
+    if (!left) {
+      socket.emit(ServerEvent.Error, {
+        message: 'Aspetta la fine della mano prima di lasciare il tavolo privato.',
+      });
+      if (typeof reply === 'function') reply({ ok: false });
+      return;
+    }
     socket.emit(ServerEvent.TableClosed, {
       reason: 'Hai lasciato il tavolo privato.',
     });
+    if (typeof reply === 'function') reply({ ok: true });
   });
 
   socket.on(ClientEvent.RechargePlayer, (payload: RechargePlayerPayload) => {

@@ -27,6 +27,7 @@ export const ClientEvent = {
   ClaimRestartFund: 'client:claim-restart-fund',
   CreatePrivateTable: 'client:create-private-table',
   JoinPrivateTable: 'client:join-private-table',
+  StartPrivateTable: 'client:start-private-table',
   LeavePrivateTable: 'client:leave-private-table',
   RechargePlayer: 'client:recharge-player',
 } as const;
@@ -143,6 +144,16 @@ export interface TableView {
   format?: 'cash' | 'twister' | 'private'| 'omaha' | 'tournament';
   /** Solo nel Twister: il moltiplicatore estratto dal server. */
   twisterMultiplier?: number | null;
+  /** Metadati dei tavoli privati, usati per lobby e reconnect. */
+  privateTable?: {
+    code: string;
+    hostId: PlayerId;
+    maxSeats: number;
+    startingStack: number;
+    phase: 'lobby' | 'playing';
+    connectedPlayerIds: readonly PlayerId[];
+    revision: number;
+  };
 }
 
 export interface ServerErrorPayload {
@@ -169,6 +180,8 @@ export interface RestartFundPayload {
 /* ── Messaggi dei tavoli privati ─────────────────────────── */
 
 export interface CreatePrivateTablePayload {
+  /** Identifica una richiesta di creazione anche dopo refresh. */
+  requestId?: string;
   /** Numero del livello di stake: decide i bui, non lo stack. */
   stakeLevel: number;
   maxSeats: number;
@@ -176,6 +189,8 @@ export interface CreatePrivateTablePayload {
   rakePercent: number;
   /** Fiche date a ciascuno. Non escono da nessun wallet. */
   startingStack: number;
+  /** Se true, la prima mano parte solo quando l'host preme Gioca. */
+  manualStart?: boolean;
 }
 
 export interface JoinPrivateTablePayload {

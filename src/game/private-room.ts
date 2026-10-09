@@ -80,6 +80,10 @@ export interface PrivateRoomOptions {
   maxSeats?: number;
   /** Percentuale trattenuta da ogni piatto, da 0 a 6. */
   rakePercent?: number;
+  /** Fiche iniziali mostrate nella lobby e usate per le ricariche. */
+  startingStack?: number;
+  /** Se true, la prima mano aspetta il comando dell'host. */
+  manualStart?: boolean;
   /** Invia la vista a un singolo giocatore. */
   sendState: (playerId: PlayerId, view: TableView) => void;
   /** Comunica un errore a un singolo giocatore. */
@@ -97,7 +101,10 @@ export class PrivateRoom {
   private readonly config: TableConfig;
   private readonly maxSeats: number;
   private readonly rakePercent: number;
+  private readonly startingStack: number;
+  private readonly manualStart: boolean;
   private readonly seduti = new Map<PlayerId, Seduto>();
+  private readonly connected = new Set<PlayerId>();
 
   private readonly sendState: PrivateRoomOptions['sendState'];
   private readonly sendError: PrivateRoomOptions['sendError'];
@@ -117,6 +124,8 @@ export class PrivateRoom {
 
   private closed = false;
   private rakeCollected = 0;
+  private startRequested = false;
+  private revision = 0;
 
   constructor(options: PrivateRoomOptions) {
     this.code = options.code;
@@ -131,6 +140,9 @@ export class PrivateRoom {
       MAX_RAKE_PERCENT,
       Math.max(0, options.rakePercent ?? 0),
     );
+    this.startingStack = Math.max(0, Math.floor(options.startingStack ?? 0));
+    this.manualStart = options.manualStart === true;
+    this.startRequested = !this.manualStart;
     this.config = deriveTableConfig(options.buyIn, this.maxSeats).config;
 
     this.sendState = options.sendState;
@@ -161,7 +173,8 @@ export class PrivateRoom {
 
     if (this.seduti.has(playerId)) {
       // Rientro dopo una disconnessione: il posto è ancora suo.
-      this.inviaA(playerId);
+      this.connected.add(playerId);
+      this.broadcast();
       return true;
     }
 
@@ -174,6 +187,27 @@ export class PrivateRoom {
       seat,
       stack: Math.max(0, Math.floor(stack)),
     });
+    this.connected.add(playerId);
+    this.revision += 1;
+    this.broadcast();
+    this.forseAvviaMano();
+    return true;
+  }
+
+  /** Segna il socket del giocatore come caduto senza liberare il posto. */
+  disconnetti(playerId: PlayerId): void {
+    if (!this.seduti.has(playerId)) return;
+    this.connected.delete(playerId);
+    this.revision += 1;
+    this.broadcast();
+  }
+
+  /** Avvia la prima mano: può farlo solo chi ospita. */
+  avviaDaHost(playerId: PlayerId): boolean {
+    if (playerId !== this.hostId) return false;
+    if (this.closed) return false;
+    if (this.state !== null && !isHandComplete(this.state)) return false;
+    this.startRequested = true;
     this.broadcast();
     this.forseAvviaMano();
     return true;
@@ -183,17 +217,17 @@ export class PrivateRoom {
   alzati(playerId: PlayerId): boolean {
     if (!this.seduti.has(playerId)) return false;
 
-    this.seduti.delete(playerId);
-
-    // Se se ne va mentre la mano è viva, per il motore è un fold:
-    // le fiche già nel piatto restano lì, come per chi passa.
-    const state = this.state;
-    if (state && !isHandComplete(state)) {
-      const inMano = state.players.find((p) => p.playerId === playerId);
-      if (inMano && inMano.status === PlayerStatus.Active) {
-        this.applicaEDiffondi(playerId, ActionType.Fold);
-      }
+    if (this.state && !isHandComplete(this.state)) {
+      this.sendError(
+        playerId,
+        'Aspetta la fine della mano prima di lasciare il tavolo privato.',
+      );
+      return false;
     }
+
+    this.seduti.delete(playerId);
+    this.connected.delete(playerId);
+    this.revision += 1;
 
     if (this.seduti.size === 0) {
       this.close();
@@ -232,6 +266,14 @@ export class PrivateRoom {
     return this.seduti.size;
   }
 
+  giocatoriConnessi(): number {
+    return this.connected.size;
+  }
+
+  playerIds(): PlayerId[] {
+    return [...this.seduti.keys()];
+  }
+
   haPosto(): boolean {
     return this.postoLibero() !== null;
   }
@@ -268,6 +310,7 @@ export class PrivateRoom {
    */
   private forseAvviaMano(): void {
     if (this.closed) return;
+    if (!this.startRequested) return;
     if (this.state !== null && !isHandComplete(this.state)) return;
     if (this.nextHandTimer !== null) return;
 
@@ -314,6 +357,7 @@ export class PrivateRoom {
       this.log = [];
       this.logId = 0;
       this.folded = new Set();
+      this.revision += 1;
     } catch (error) {
       this.diffondiErrore(
         `Impossibile avviare la mano: ${(error as Error).message}`,
@@ -379,6 +423,7 @@ export class PrivateRoom {
     }
 
     this.state = next;
+    this.revision += 1;
 
     if (isHandComplete(next)) {
       for (const p of next.players) {
@@ -686,6 +731,17 @@ export class PrivateRoom {
       // serve, e mostrarlo darebbe l'idea sbagliata che qualcuno ci
       // stia guadagnando.
       privateRakeTotal: viewerId === this.hostId ? this.rakeCollected : null,
+      tableId: this.code,
+      format: 'private',
+      privateTable: {
+        code: this.code,
+        hostId: this.hostId,
+        maxSeats: this.maxSeats,
+        startingStack: this.startingStack,
+        phase: this.state === null && !this.startRequested ? 'lobby' : 'playing',
+        connectedPlayerIds: [...this.connected],
+        revision: this.revision,
+      },
       // Silenzia l'avviso: mioStack serve solo a documentare che
       // qui non si va mai "busted".
       ...(mioStack < 0 ? {} : {}),
