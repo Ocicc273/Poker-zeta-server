@@ -19,6 +19,7 @@ import { PrivateRoom } from './private-room.js';
 import { MAX_SEATS_PRIVATE } from './table-config.js';
 import { HOLDEM_STAKES, stakeLevelByNumber } from './stakes.js';
 import {
+  authorizeClubMember,
   closePrivateTable,
   openPrivateTable,
   recordMissionEvent,
@@ -53,6 +54,8 @@ interface ActiveTable {
   stakeLevel: number;
   maxSeats: number;
   requestId?: string;
+  clubId?: string;
+  tableName?: string;
 }
 
 const tables = new Map<string, ActiveTable>();
@@ -115,6 +118,9 @@ function forgetPlayer(playerId: PlayerId): void {
 /* ── Creazione ───────────────────────────────────────────── */
 
 export interface CreateTableRequest {
+  clubId?: unknown;
+  tableName?: unknown;
+  gameMode?: unknown;
   requestId?: unknown;
   stakeLevel: unknown;
   maxSeats: unknown;
@@ -147,6 +153,21 @@ export async function createTable(
     );
   }
 
+  const clubId = typeof request.clubId === 'string' ? request.clubId : undefined;
+  const tableName = typeof request.tableName === 'string' ? request.tableName.trim() : undefined;
+  if (request.gameMode !== undefined && request.gameMode !== 'holdem') {
+    throw new PrivateTableError('Nei tavoli privati è disponibile solo Hold’em.');
+  }
+  if (clubId && (!/^[0-9a-f-]{36}$/i.test(clubId) || !tableName || tableName.length < 3 || tableName.length > 40)) {
+    throw new PrivateTableError('Club o nome tavolo non valido.');
+  }
+  if (clubId && (!Number.isInteger(request.stakeLevel) || !stakeLevelByNumber(request.stakeLevel as number)
+    || !Number.isInteger(request.maxSeats) || Number(request.maxSeats) < 2 || Number(request.maxSeats) > MAX_SEATS_PRIVATE
+    || !Number.isInteger(request.startingStack) || Number(request.startingStack) < MIN_STACK || Number(request.startingStack) > MAX_STACK
+    || Number(request.startingStack) < stakeLevelByNumber(Number(request.stakeLevel))!.bigBlind
+    || !Number.isInteger(request.rakePercent) || Number(request.rakePercent) < 0 || Number(request.rakePercent) > MAX_RAKE_PERCENT)) {
+    throw new PrivateTableError('Impostazioni del tavolo non supportate.');
+  }
   const stake =
     stakeLevelByNumber(intero(request.stakeLevel, 1)) ?? HOLDEM_STAKES[0]!;
 
@@ -178,6 +199,8 @@ export async function createTable(
     startingStack,
     maxSeats,
     requestId,
+    clubId,
+    tableName,
   );
 
   const room = new PrivateRoom({
@@ -195,9 +218,11 @@ export async function createTable(
     maxSeats,
     rakePercent,
     startingStack,
-    manualStart,
-    sendState: (playerId, view) =>
-      emitToPlayer(playerId, ServerEvent.TableState, view),
+    manualStart: clubId ? true : manualStart,
+    sendState: (playerId, view) => {
+      emitToPlayer(playerId, ServerEvent.TableState, view);
+      if (clubId) publishClubTables(clubId);
+    },
     sendError: (playerId, message) =>
       emitToPlayer(playerId, ServerEvent.Error, { message }),
     onEmpty: () => {
@@ -219,6 +244,8 @@ export async function createTable(
     stakeLevel: stake.level,
     maxSeats,
     requestId,
+    clubId,
+    tableName,
   });
 
   bindSocket(hostId, socketId);
@@ -245,12 +272,12 @@ export async function createTable(
  * ingresso nuovo: il posto e le fiche sono ancora suoi, e non
  * riceve un secondo stack.
  */
-export function joinTable(
+export async function joinTable(
   socketId: string,
   rawCode: unknown,
   playerId: PlayerId,
   playerName: string,
-): PrivateRoom {
+): Promise<PrivateRoom> {
   const code = String(rawCode ?? '')
     .trim()
     .toUpperCase();
@@ -260,6 +287,11 @@ export function joinTable(
     throw new PrivateTableError('Codice non valido: nessun tavolo con questo codice.');
   }
 
+  if (entry.clubId) {
+    try { await authorizeClubMember(playerId, entry.clubId); }
+    catch { throw new PrivateTableError('Ingresso riservato ai membri del club.'); }
+    if (tables.get(code) !== entry) throw new PrivateTableError('Tavolo chiuso.');
+  }
   const altrove = codeByPlayer.get(playerId);
   if (altrove !== undefined && altrove !== code) {
     throw new PrivateTableError(
@@ -273,7 +305,7 @@ export function joinTable(
   if (entry.room.eSeduto(playerId)) {
     // Rientro: la fotografia completa, niente stack nuovo.
     codeByPlayer.set(playerId, code);
-    entry.room.inviaA(playerId);
+    entry.room.siediti(playerId, playerName, entry.startingStack);
     return entry.room;
   }
 
@@ -398,6 +430,7 @@ async function dismissTable(code: string): Promise<void> {
   if (!entry) return;
 
   tables.delete(code);
+  if (entry.clubId) publishClubTables(entry.clubId);
   for (const playerId of entry.room.playerIds()) {
     emitToPlayer(playerId, ServerEvent.TableClosed, {
       reason: 'Tavolo privato chiuso.',
@@ -453,4 +486,19 @@ export function privatePlayerCount(): number {
 export async function closeAllPrivateTables(): Promise<void> {
   const codes = [...tables.keys()];
   await Promise.allSettled(codes.map((code) => dismissTable(code)));
+}
+
+/** Public occupancy only: never broadcast hole cards or a player's TableView. */
+export function clubTableSummaries(clubId: string) {
+  return [...tables.values()].filter(t => t.clubId === clubId).map(t => ({
+    code: t.code, tableName: t.tableName, maxSeats: t.maxSeats,
+    occupied: t.room.giocatoriSeduti(), connected: t.room.giocatoriConnessi(),
+  }));
+}
+const clubSnapshots = new Map<string, string>();
+function publishClubTables(clubId: string): void {
+  const snapshot = JSON.stringify(clubTableSummaries(clubId));
+  if (clubSnapshots.get(clubId) === snapshot) return;
+  clubSnapshots.set(clubId, snapshot);
+  io?.to('club:' + clubId).emit('server:club-tables', clubTableSummaries(clubId));
 }

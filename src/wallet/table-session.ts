@@ -264,17 +264,21 @@ export async function openPrivateTable(
   buyIn: number,
   maxSeats: number,
   requestId?: string,
+  clubId?: string,
+  tableName?: string,
 ): Promise<string> {
-  const result = await callWallet<{ code?: string }>({
+  const result = await callWallet<{ code?: string; clubId?: string }>({
     action: 'private-open',
     hostId,
     stakeLevel: Math.max(1, Math.floor(stakeLevel)),
     buyIn: Math.max(1, Math.floor(buyIn)),
     maxSeats: Math.max(2, Math.floor(maxSeats)),
     requestId,
+    clubId,
+    tableName,
   });
 
-  if (typeof result.code !== 'string') {
+  if (typeof result.code !== 'string' || (clubId && result.clubId !== clubId)) {
     throw new WalletError('Tavolo non creato dal servizio wallet.');
   }
 
@@ -294,4 +298,9 @@ export async function closePrivateTable(code: string): Promise<void> {
   } catch (error) {
     console.error(`Chiusura del tavolo privato ${code} fallita:`, error);
   }
+}
+
+export async function authorizeClubMember(userId: string, clubId: string): Promise<void> {
+  const result = await callWallet<{ allowed?: boolean }>({ action: 'private-club-access', userId, clubId });
+  if (result.allowed !== true) throw new WalletError('Non sei membro del club');
 }

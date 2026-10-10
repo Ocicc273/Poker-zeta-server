@@ -180,6 +180,9 @@ export interface RestartFundPayload {
 /* ── Messaggi dei tavoli privati ─────────────────────────── */
 
 export interface CreatePrivateTablePayload {
+  clubId?: string;
+  tableName?: string;
+  gameMode?: 'holdem';
   /** Identifica una richiesta di creazione anche dopo refresh. */
   requestId?: string;
   /** Numero del livello di stake: decide i bui, non lo stack. */

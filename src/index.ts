@@ -1,3 +1,4 @@
+import { authorizeClubMember } from './wallet/table-session.js';
 /**
  * Poker Zeta — Match Server
  * Punto di ingresso.
@@ -67,6 +68,7 @@ import {
 import {
   closeAllPrivateTables,
   configurePrivateRoomManager,
+  clubTableSummaries,
   createTable as createPrivateTable,
   detachPrivateSocket,
   getPrivateTableByPlayer,
@@ -409,6 +411,20 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('client:watch-club', async (payload: { clubId?: unknown }) => {
+    const clubId = payload?.clubId;
+    if (typeof clubId !== 'string' || !/^[0-9a-f-]{36}$/i.test(clubId)) return;
+    try {
+      await authorizeClubMember(player.userId, clubId);
+      if (!socket.connected) return;
+      for (const room of socket.rooms) if (room.startsWith('club:')) await socket.leave(room);
+      await socket.join('club:' + clubId);
+      socket.emit('server:club-tables', clubTableSummaries(clubId));
+    } catch {
+      socket.emit(ServerEvent.Error, { message: 'Accesso club non autorizzato.' });
+    }
+  });
+
   /* ── Tavoli privati ────────────────────────────────────── */
 
   socket.on(
@@ -426,6 +442,9 @@ io.on('connection', (socket) => {
             startingStack: payload?.startingStack,
             requestId: payload?.requestId,
             manualStart: payload?.manualStart,
+            clubId: payload?.clubId,
+            tableName: payload?.tableName,
+            gameMode: payload?.gameMode,
           },
         ));
 
