@@ -115,10 +115,17 @@ export function evaluateOmahaHand(
     );
   }
 
-  if (communityCards.length < OMAHA_REQUIRED_COMMUNITY) {
+  if (communityCards.length < OMAHA_REQUIRED_COMMUNITY || communityCards.length > 5) {
     throw new Error(
-      `Servono almeno ${OMAHA_REQUIRED_COMMUNITY} carte comuni, ricevute ${communityCards.length}.`
+      `Omaha richiede da ${OMAHA_REQUIRED_COMMUNITY} a 5 carte comuni, ricevute ${communityCards.length}.`
     );
+  }
+
+  const seen = new Set<string>();
+  for (const card of [...holeCards, ...communityCards]) {
+    const key = `${card.rank}${card.suit}`;
+    if (seen.has(key)) throw new Error(`Carta duplicata Omaha: ${key}`);
+    seen.add(key);
   }
 
   const holePairs = combinations(holeCards, OMAHA_REQUIRED_HOLE);
@@ -263,3 +270,4 @@ export function maxPotLimitRaise(
 
   return Math.min(maxTotal, stackLimit);
 }
+

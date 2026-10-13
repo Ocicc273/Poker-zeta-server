@@ -57,6 +57,8 @@ export interface Contribution {
 
 /** Un pot con l'elenco di chi può vincerlo. */
 export interface Pot {
+  /** La parte non chiamata torna al contributore, senza una vittoria. */
+  uncalled?: true;
   /** Z-Coins contenuti. */
   amount: number;
   /** Giocatori che possono contenderlo. */
@@ -129,6 +131,7 @@ export function buildPots(contributions: readonly Contribution[]): Pot[] {
     // foldato, e allora la mano sarebbe già finita.
     if (potAmount > 0 && eligible.length > 0) {
       pots.push({
+        ...(contributors.length === 1 ? { uncalled: true as const } : {}),
         amount: potAmount,
         eligiblePlayers: eligible,
         index: pots.length,
@@ -167,13 +170,13 @@ export interface ShowdownEntry {
  *
  * REGOLA DEL RESTO: quando un pot non è divisibile esattamente fra
  * più vincitori, l'avanzo (odd chip) va al primo giocatore in ordine
- * di posizione a partire dallo small blind. È la convenzione dei
+ * di posizione a sinistra del bottone. È la convenzione dei
  * tavoli fisici. Il resto non viene mai scartato: la somma dei
  * payout è sempre esattamente uguale al totale dei pot.
  *
  * @param pots I pot da distribuire.
  * @param showdown Le mani dei giocatori ancora in gara.
- * @param seatOrder Ordine di posizione dallo small blind, per il resto.
+ * @param seatOrder Ordine di posizione dopo il dealer, per il resto.
  */
 export function distributePots(
   pots: readonly Pot[],
@@ -217,10 +220,8 @@ export function distributePots(
       .filter((entry): entry is RankedPlayer<PlayerId> => entry !== undefined);
 
     if (contenders.length === 0) {
-      // Nessun avente diritto è arrivato allo showdown: il pot va
-      // all'unico rimasto in gara. Condizione anomala, gestita per
-      // non perdere Z-Coins.
-      continue;
+      // Saltare il piatto perderebbe chips silenziosamente.
+      throw new Error(`Nessuna mano valida per il piatto ${pot.index}.`);
     }
 
     // La posizione migliore fra i contendenti di questo pot.
@@ -299,3 +300,4 @@ export function verifyPayoutIntegrity(
     payoutTotal,
   };
 }
+

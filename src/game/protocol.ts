@@ -73,6 +73,16 @@ export interface ActionLogEntry {
   street: Street;
 }
 
+
+export interface ShowdownHandView {
+  playerId: PlayerId;
+  variant: 'holdem' | 'omaha';
+  description: string;
+  cards: readonly Card[];
+  usedHoleCards: readonly Card[];
+  usedCommunityCards: readonly Card[];
+}
+
 export interface PayoutView {
   playerId: PlayerId;
   amount: number;
@@ -105,6 +115,9 @@ export interface PlayerView {
  * struttura più ricca che resta sul server.
  */
 export interface TableView {
+  /** Risultato e cinque carte scelte dal Match Server; assenti sui server precedenti. */
+  showdown?: readonly ShowdownHandView[];
+  winnerIds?: readonly PlayerId[];
   handId: string | null;
   street: Street | null;
   communityCards: readonly Card[];

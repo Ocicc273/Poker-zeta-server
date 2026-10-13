@@ -1,3 +1,4 @@
+import { showdownView } from './showdown-view.js';
 /**
  * Poker Zeta — Stanza privata fra amici
  *
@@ -732,6 +733,8 @@ export class PrivateRoom {
   private buildView(viewerId: PlayerId): TableView {
     const state = this.state;
     const complete = state !== null && isHandComplete(state);
+    const result = showdownView(state);
+    const revealedIds = new Set(result.showdown.map(p => p.playerId));
 
     const players: PlayerView[] = [...this.seduti.values()]
       .sort((a, b) => a.seat - b.seat)
@@ -745,11 +748,7 @@ export class PrivateRoom {
         // Qui avviene la censura: le carte esistono nello stato del
         // server ma entrano nel messaggio solo se sono di chi
         // guarda, o a mano conclusa per chi non ha passato.
-        const visible =
-          isSelf ||
-          (complete &&
-            !this.folded.has(seduto.playerId) &&
-            holeCards.length > 0);
+        const visible = isSelf || revealedIds.has(seduto.playerId);
 
         return {
           playerId: seduto.playerId,
@@ -758,7 +757,7 @@ export class PrivateRoom {
           stack: complete ? seduto.stack : inMano?.stack ?? seduto.stack,
           committedThisStreet: inMano?.committedThisStreet ?? 0,
           status: inMano?.status ?? PlayerStatus.SittingOut,
-          isDealer: seduto.seat === this.dealerSeat,
+          isDealer: seduto.seat === (state?.dealerSeat ?? this.dealerSeat),
           // Nei tavoli privati sono tutte persone.
           isBot: false,
           holeCards: visible ? holeCards : null,
@@ -771,6 +770,7 @@ export class PrivateRoom {
     const mioStack = this.seduti.get(viewerId)?.stack ?? 0;
 
     return {
+      ...result,
       handId: state?.handId ?? null,
       street: state?.street ?? null,
       communityCards: state?.communityCards ?? [],

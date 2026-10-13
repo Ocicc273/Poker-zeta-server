@@ -16,6 +16,8 @@ import './table-config.test.js';
 import './twister.test.js';
 import './pot.test.js';
 import './showdown.test.js';
+import './showdown-result.test.js';
+import './showdown-socket.test.js';
 import './rake.test.js';
 import './shutdown.test.js';
 import './tournament.test.js';

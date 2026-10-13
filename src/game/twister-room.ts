@@ -1,3 +1,4 @@
+import { showdownView } from './showdown-view.js';
 /**
  * Poker Zeta — Tavolo Twister
  *
@@ -644,6 +645,8 @@ export class TwisterRoom {
   private buildView(): TableView {
     const state = this.state;
     const complete = state !== null && isHandComplete(state);
+    const result = showdownView(state);
+    const revealedIds = new Set(result.showdown.map(p => p.playerId));
 
     const players: PlayerView[] = [...this.seats.entries()]
       .sort((a, b) => a[1] - b[1])
@@ -652,9 +655,7 @@ export class TwisterRoom {
         const isSelf = playerId === this.humanId;
         const holeCards = inMano?.holeCards ?? [];
 
-        const visible =
-          isSelf ||
-          (complete && !this.folded.has(playerId) && holeCards.length > 0);
+        const visible = isSelf || revealedIds.has(playerId);
 
         return {
           playerId,
@@ -663,7 +664,7 @@ export class TwisterRoom {
           stack: inMano?.stack ?? this.chips.get(playerId) ?? 0,
           committedThisStreet: inMano?.committedThisStreet ?? 0,
           status: inMano?.status ?? PlayerStatus.SittingOut,
-          isDealer: seat === this.dealerSeat,
+          isDealer: seat === (state?.dealerSeat ?? this.dealerSeat),
           isBot: playerId !== this.humanId,
           holeCards: visible ? holeCards : null,
           holeCardCount: holeCards.length,
@@ -674,6 +675,7 @@ export class TwisterRoom {
       state !== null && !complete && state.toActPlayerId === this.humanId;
 
     return {
+      ...result,
       handId: state?.handId ?? null,
       street: state?.street ?? null,
       communityCards: state?.communityCards ?? [],
@@ -700,3 +702,4 @@ export class TwisterRoom {
     };
   }
   }
+

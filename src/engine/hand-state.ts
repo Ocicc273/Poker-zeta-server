@@ -108,20 +108,15 @@ function nextToAct(
   return ordered.find((p) => p.seat > fromSeat) ?? ordered[0]!;
 }
 
-/** Ordine dei giocatori a partire dallo small blind. */
-function seatOrderFromSmallBlind(state: HandState): PlayerId[] {
+/** La fiche dispari va al primo vincitore a sinistra del bottone. */
+function seatOrderAfterDealer(state: HandState): PlayerId[] {
   const inHand = contestingPlayers(state.players).sort((a, b) => a.seat - b.seat);
   if (inHand.length === 0) return [];
 
-  const headsUp = inHand.length === 2;
-  // Heads-up: il dealer È lo small blind. Con tre o più giocatori
-  // lo small blind è il primo dopo il dealer.
-  const sbSeat = headsUp
-    ? state.dealerSeat
-    : (nextToAct(state.players, state.dealerSeat)?.seat ?? state.dealerSeat);
-
-  const before = inHand.filter((p) => p.seat >= sbSeat);
-  const after = inHand.filter((p) => p.seat < sbSeat);
+  // L'ordine dei posti non dipende da chi può ancora puntare:
+  // un all-in resta avente diritto e i fold non spostano il bottone.
+  const before = inHand.filter((p) => p.seat > state.dealerSeat);
+  const after = inHand.filter((p) => p.seat <= state.dealerSeat);
 
   return [...before, ...after].map((p) => p.playerId);
 }
@@ -744,7 +739,7 @@ function concludeShowdown(state: HandState): HandState {
   const payouts = distributePots(
     pots,
     showdown,
-    seatOrderFromSmallBlind(state)
+    seatOrderAfterDealer(state)
   );
 
   return {
@@ -807,3 +802,4 @@ export function toPlayerView(
   const { deck: _deck, ...rest } = state;
   return { ...rest, players };
   }
+

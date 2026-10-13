@@ -1,0 +1,20 @@
+name: Verifiche showdown Match Server
+on:
+  push:
+    branches: [codex/showdown-fix-20261013]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --ignore-scripts
+      - name: TypeScript, regressioni e tre connessioni Socket.IO reali
+        run: bun run build

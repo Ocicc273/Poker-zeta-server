@@ -1,3 +1,4 @@
+import { showdownView } from './showdown-view.js';
 import { startHand, applyAction, getAvailableActions, isHandComplete, currentPotTotal,
   ActionType, PlayerStatus, type HandState, type TableConfig } from '../engine/index.js';
 import { runOutForcedAllIn } from '../engine/hand-state.js';
@@ -82,14 +83,16 @@ export class TournamentRoom {
     const hand = this.hand;
     if (!hand || !this.players.some(p => p.id === viewer)) return null;
     const complete = isHandComplete(hand);
+    const result = showdownView(hand);
+    const revealedIds = new Set(result.showdown.map(p => p.playerId));
     return {
+      ...result,
       tableId: this.id, format: 'tournament', handId: hand.handId, street: hand.street,
       communityCards: hand.communityCards, pot: currentPotTotal(hand), currentBet: hand.currentBet,
       toActPlayerId: hand.toActPlayerId, yourPlayerId: viewer,
       players: this.players.map(p => {
         const state = hand.players.find(x => x.playerId === p.id);
-        const showdown = complete && hand.players.filter(x => x.status !== PlayerStatus.Folded).length > 1;
-        const visible = p.id === viewer || (showdown && state?.status !== PlayerStatus.Folded);
+        const visible = p.id === viewer || revealedIds.has(p.id);
         return { playerId: p.id, name: p.name, seat: p.seat, stack: state?.stack ?? p.stack,
           committedThisStreet: state?.committedThisStreet ?? 0, status: state?.status ?? PlayerStatus.SittingOut,
           isDealer: p.seat === hand.dealerSeat, isBot: false,
@@ -104,3 +107,4 @@ export class TournamentRoom {
     };
   }
 }
+
