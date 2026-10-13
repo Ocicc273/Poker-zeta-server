@@ -21,6 +21,8 @@ import { authorizeClubMember } from './wallet/table-session.js';
 
 import { createServer } from 'node:http';
 import { Server } from 'socket.io';
+import { actClub, startClub, leaveClub, reloadClub, assignClub, closeClub,
+  clubRoomByPlayer, recoverClubRooms, clubPhase3Enabled, currentClubStacks } from './game/club-room-manager.js';
 import { env } from './config/env.js';
 import { TournamentService } from './game/tournament-service.js';
 import { TournamentEvent, type TournamentAction, type TournamentReply } from './game/tournament-protocol.js';
@@ -208,6 +210,22 @@ io.on('connection', (socket) => {
 
   console.log(`Giocatore autenticato: ${label} [${player.userId}]`);
   socket.emit(ServerEvent.Welcome, player);
+  socket.emit('server:club-capabilities', { phase3: clubPhase3Enabled });
+  const clubRequest = (job: () => Promise<unknown>, reply?: (result: { ok: boolean; error?: string; data?: unknown }) => void) => {
+    void job().then(data => { if (typeof reply === 'function') reply({ ok: true, data }); }).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : 'Operazione Club non riuscita.';
+      socket.emit(ServerEvent.Error, { message });
+      if (typeof reply === 'function') reply({ ok: false, error: message });
+    });
+  };
+  socket.on('client:club-reload', (p, reply) => clubRequest(() =>
+    reloadClub(player.userId, String(p?.code ?? ''), String(p?.userId ?? ''), p?.amount, p?.requestId), reply));
+  socket.on('client:club-assign', (p, reply) => clubRequest(() =>
+    assignClub(player.userId, String(p?.code ?? ''), String(p?.userId ?? ''), p?.amount, p?.requestId), reply));
+  socket.on('client:club-close', (p, reply) => clubRequest(() =>
+    closeClub(player.userId, String(p?.code ?? '')), reply));
+  socket.on('client:club-current', (p, reply) => clubRequest(() =>
+    currentClubStacks(player.userId, String(p?.code ?? '')), reply));
 
   const tournamentRequest = (job: () => Promise<void>, reply?: (result: TournamentReply) => void) => {
     void job().then(() => { if (typeof reply === 'function') reply({ ok: true }); })
@@ -308,6 +326,10 @@ io.on('connection', (socket) => {
     }
   });
   socket.on(ClientEvent.Action, (payload: ActionPayload) => {
+    if (clubRoomByPlayer(player.userId)) {
+      clubRequest(() => actClub(player.userId, payload?.type, payload?.amount, payload?.requestId));
+      return;
+    }
     // L'ordine di precedenza conta: un registro può avere un
     // tavolo ancora vivo in attesa di rientro, e servirlo adesso
     // vorrebbe dire muovere il tavolo sbagliato.
@@ -431,6 +453,8 @@ io.on('connection', (socket) => {
     ClientEvent.CreatePrivateTable,
     async (payload: CreatePrivateTablePayload) => {
       try {
+        if (getRoomByPlayer(player.userId) || getTwisterByPlayer(player.userId))
+          throw new PrivateTableError('Lascia il tavolo attuale prima di aprirne un altro.');
         const code = await enterNonTournament(player.userId, () => createPrivateTable(
           socket.id,
           player.userId,
@@ -445,6 +469,9 @@ io.on('connection', (socket) => {
             clubId: payload?.clubId,
             tableName: payload?.tableName,
             gameMode: payload?.gameMode,
+            smallBlind: payload?.smallBlind,
+            bigBlind: payload?.bigBlind,
+            initialStacks: payload?.initialStacks,
           },
         ));
 
@@ -467,6 +494,8 @@ io.on('connection', (socket) => {
     ClientEvent.JoinPrivateTable,
     async (payload: JoinPrivateTablePayload) => {
       try {
+        if (getRoomByPlayer(player.userId) || getTwisterByPlayer(player.userId))
+          throw new PrivateTableError('Lascia il tavolo attuale prima di entrare.');
         await enterNonTournament(player.userId, () => joinPrivateTable(
           socket.id,
           payload?.code,
@@ -488,6 +517,10 @@ io.on('connection', (socket) => {
   );
 
   socket.on(ClientEvent.StartPrivateTable, () => {
+    if (clubRoomByPlayer(player.userId)) {
+      clubRequest(() => startClub(player.userId));
+      return;
+    }
     const partita = getPrivateTableByPlayer(player.userId);
     if (!partita) {
       socket.emit(ServerEvent.Error, { message: 'Nessun tavolo privato attivo.' });
@@ -507,6 +540,13 @@ io.on('connection', (socket) => {
   });
 
   socket.on(ClientEvent.LeavePrivateTable, (reply?: (result: { ok: boolean }) => void) => {
+    if (clubRoomByPlayer(player.userId)) {
+      clubRequest(async () => {
+        await leaveClub(player.userId);
+        socket.emit(ServerEvent.TableClosed, { reason: 'Stack finale registrato automaticamente.' });
+      }, reply);
+      return;
+    }
     // Nessun riaccredito: le fiche del privato non sono mai uscite
     // da un wallet e non ci tornano.
     const left = leavePrivateTable(player.userId);
@@ -524,6 +564,11 @@ io.on('connection', (socket) => {
   });
 
   socket.on(ClientEvent.RechargePlayer, (payload: RechargePlayerPayload) => {
+    const club = clubRoomByPlayer(player.userId);
+    if (club) {
+      clubRequest(() => reloadClub(player.userId, club.code, payload?.playerId, payload?.stack, payload?.requestId ?? ''));
+      return;
+    }
     const fatto = rechargePlayer(
       player.userId,
       payload?.playerId,
@@ -557,6 +602,7 @@ io.on('connection', (socket) => {
 // crash. Attesa e non lanciata in parallelo, altrimenti una sessione
 // aperta in questi millisecondi verrebbe annullata a tavolo vivo.
 const orfane = await reconcileOrphanSessions();
+await recoverClubRooms();
 console.log(
   orfane > 0
     ? `Riconciliazione: ${orfane} sessioni annullate e rimborsate.`
@@ -643,3 +689,4 @@ async function shutdown(signal: string): Promise<void> {
 
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
+

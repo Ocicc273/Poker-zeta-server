@@ -59,6 +59,7 @@ export interface JoinTwisterPayload {
   buyIn: number;
 }
 export interface ActionPayload {
+  requestId?: string;
   type: ActionType;
   amount?: number;
 }
@@ -146,6 +147,7 @@ export interface TableView {
   twisterMultiplier?: number | null;
   /** Metadati dei tavoli privati, usati per lobby e reconnect. */
   privateTable?: {
+    clubPhase3?: boolean;
     code: string;
     hostId: PlayerId;
     maxSeats: number;
@@ -180,6 +182,9 @@ export interface RestartFundPayload {
 /* ── Messaggi dei tavoli privati ─────────────────────────── */
 
 export interface CreatePrivateTablePayload {
+  smallBlind?: number;
+  bigBlind?: number;
+  initialStacks?: Record<string, number>;
   clubId?: string;
   tableName?: string;
   gameMode?: 'holdem';
@@ -201,6 +206,7 @@ export interface JoinPrivateTablePayload {
 }
 
 export interface RechargePlayerPayload {
+  requestId?: string;
   playerId: PlayerId;
   stack: number;
 }
@@ -209,3 +215,4 @@ export interface RechargePlayerPayload {
 export interface PrivateTableCreatedPayload {
   code: string;
 }
+

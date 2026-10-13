@@ -26,6 +26,9 @@ import {
 } from '../wallet/table-session.js';
 import { ServerEvent } from './protocol.js';
 import type { PlayerId } from '../engine/index.js';
+import { clubPhase3Enabled, configureClubRooms, createClubRoom, joinClubRoom,
+  clubRoomByPlayer, clubRoomByCode, detachClubSocket, clubRoomCount, clubPlayerCount,
+  clubSummaries, stopClubRooms } from './club-room-manager.js';
 
 /** Come per i tavoli contro bot: la linea che cade non è un'uscita. */
 const ABANDON_MS = 120_000;
@@ -68,6 +71,7 @@ let io: Server | null = null;
 /** Da chiamare una volta all'avvio, come per le stanze normali. */
 export function configurePrivateRoomManager(server: Server): void {
   io = server;
+  configureClubRooms(server);
 }
 
 /* ── Trasmissione ────────────────────────────────────────── */
@@ -118,6 +122,9 @@ function forgetPlayer(playerId: PlayerId): void {
 /* ── Creazione ───────────────────────────────────────────── */
 
 export interface CreateTableRequest {
+  smallBlind?: unknown;
+  bigBlind?: unknown;
+  initialStacks?: unknown;
   clubId?: unknown;
   tableName?: unknown;
   gameMode?: unknown;
@@ -147,6 +154,13 @@ export async function createTable(
   hostName: string,
   request: CreateTableRequest,
 ): Promise<string> {
+  if (clubRoomByPlayer(hostId) && !(request.clubId && clubPhase3Enabled))
+    throw new PrivateTableError('Sei già seduto a un tavolo Club.');
+  if (request.clubId && clubPhase3Enabled) {
+    if (codeByPlayer.has(hostId)) throw new PrivateTableError('Sei già seduto a un tavolo privato.');
+    try { return await createClubRoom(socketId, hostId, hostName, request); }
+    catch (error) { throw new PrivateTableError((error as Error).message); }
+  }
   if (codeByPlayer.has(hostId)) {
     throw new PrivateTableError(
       'Sei già seduto a un tavolo privato: escine prima di aprirne un altro.',
@@ -283,6 +297,13 @@ export async function joinTable(
     .toUpperCase();
 
   const entry = tables.get(code);
+  if (clubRoomByPlayer(playerId) && !clubRoomByCode(code))
+    throw new PrivateTableError('Sei già seduto a un tavolo Club.');
+  if (clubRoomByCode(code)) {
+    if (codeByPlayer.has(playerId)) throw new PrivateTableError('Sei già seduto a un tavolo privato.');
+    try { return await joinClubRoom(socketId, code, playerId, playerName); }
+    catch (error) { throw new PrivateTableError((error as Error).message); }
+  }
   if (!entry) {
     throw new PrivateTableError('Codice non valido: nessun tavolo con questo codice.');
   }
@@ -396,6 +417,7 @@ export function detachPrivateSocket(
   playerId: PlayerId,
   socketId: string,
 ): void {
+  detachClubSocket(playerId, socketId);
   if (socketByPlayer.get(playerId) !== socketId) return;
   if (!codeByPlayer.has(playerId)) return;
 
@@ -456,16 +478,20 @@ async function dismissTable(code: string): Promise<void> {
 export function getPrivateTableByPlayer(
   playerId: PlayerId,
 ): PrivateRoom | undefined {
+  const club = clubRoomByPlayer(playerId);
+  if (club) return club;
   const code = codeByPlayer.get(playerId);
   return code === undefined ? undefined : tables.get(code)?.room;
 }
 
 export function getPrivateTableByCode(code: string): PrivateRoom | undefined {
+  const club = clubRoomByCode(code);
+  if (club) return club;
   return tables.get(code.trim().toUpperCase())?.room;
 }
 
 export function privateTableCount(): number {
-  return tables.size;
+  return tables.size + clubRoomCount();
 }
 /**
  * Quante persone sono sedute, sommando tutti i tavoli privati.
@@ -479,13 +505,14 @@ export function privatePlayerCount(): number {
   for (const entry of tables.values()) {
     totale += entry.room.giocatoriSeduti();
   }
-  return totale;
+  return totale + clubPlayerCount();
 }
 
 /** Chiude tutti i tavoli: serve allo spegnimento ordinato. */
 export async function closeAllPrivateTables(): Promise<void> {
   const codes = [...tables.keys()];
   await Promise.allSettled(codes.map((code) => dismissTable(code)));
+  await stopClubRooms();
 }
 
 /** Public occupancy only: never broadcast hole cards or a player's TableView. */
@@ -493,7 +520,7 @@ export function clubTableSummaries(clubId: string) {
   return [...tables.values()].filter(t => t.clubId === clubId).map(t => ({
     code: t.code, tableName: t.tableName, maxSeats: t.maxSeats,
     occupied: t.room.giocatoriSeduti(), connected: t.room.giocatoriConnessi(),
-  }));
+  })).concat(clubSummaries(clubId));
 }
 const clubSnapshots = new Map<string, string>();
 function publishClubTables(clubId: string): void {
@@ -502,3 +529,4 @@ function publishClubTables(clubId: string): void {
   clubSnapshots.set(clubId, snapshot);
   io?.to('club:' + clubId).emit('server:club-tables', clubTableSummaries(clubId));
 }
+
