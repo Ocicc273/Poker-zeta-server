@@ -71,6 +71,9 @@ interface Seduto {
 }
 
 export interface PrivateRoomOptions {
+  /** Solo Club: bui in unità intere da 0,01 chip e coda dei timer. */
+  clubBlinds?: TableConfig['blinds'];
+  dispatch?: (operation: () => void) => void;
   /** Il codice del tavolo fa da identificativo. */
   code: string;
   /** Chi ha creato il tavolo: decide ricariche e impostazioni. */
@@ -121,11 +124,17 @@ export class PrivateRoom {
   private turnDeadline: number | null = null;
   private turnOwner: PlayerId | null = null;
   private nextHandTimer: ReturnType<typeof setTimeout> | null = null;
+  private nextHandDeadline: number | null = null;
+  private heldTurn: { owner: PlayerId | null; deadline: number | null } | null = null;
+  private heldNextDeadline: number | null = null;
 
   private closed = false;
   private rakeCollected = 0;
   private startRequested = false;
   private revision = 0;
+  private checkpointHeld = false;
+  private readonly dispatch?: (operation: () => void) => void;
+  private readonly chipScale: number;
 
   constructor(options: PrivateRoomOptions) {
     this.code = options.code;
@@ -144,6 +153,9 @@ export class PrivateRoom {
     this.manualStart = options.manualStart === true;
     this.startRequested = !this.manualStart;
     this.config = deriveTableConfig(options.buyIn, this.maxSeats).config;
+    if (options.clubBlinds) this.config.blinds = { ...options.clubBlinds };
+    this.dispatch = options.dispatch;
+    this.chipScale = options.clubBlinds ? 100 : 1;
 
     this.sendState = options.sendState;
     this.sendError = options.sendError;
@@ -286,6 +298,55 @@ export class PrivateRoom {
     return this.rakeCollected;
   }
 
+  /** Blocca timer e trasmissioni fino al salvataggio contabile. */
+  holdCheckpoint(): void {
+    if (!this.checkpointHeld) {
+      this.heldTurn = { owner: this.turnOwner, deadline: this.turnDeadline };
+      this.heldNextDeadline = this.nextHandDeadline;
+    }
+    this.checkpointHeld = true;
+    this.clearTurnTimer();
+    this.clearNextHandTimer();
+  }
+
+  resumeCheckpoint(): void {
+    this.checkpointHeld = false;
+    this.broadcast();
+    this.forseAvviaMano();
+    this.heldTurn = null;
+    this.heldNextDeadline = null;
+  }
+
+  handInProgress(): boolean {
+    return this.state !== null && !isHandComplete(this.state);
+  }
+  checkpointPending(): boolean { return this.checkpointHeld; }
+
+  /** A mano aperta le puntate tornano al proprietario se il processo cade. */
+  accountingStacks(): { playerId: PlayerId; stack: number }[] {
+    return [...this.seduti.values()].map(s => {
+      const p = this.handInProgress() ? this.state?.players.find(p => p.playerId === s.playerId) : undefined;
+      return { playerId: s.playerId, stack: p ? p.stack + p.committedTotal : s.stack };
+    });
+  }
+
+  liveStacks(): { userId: PlayerId; currentUnits: number }[] {
+    return [...this.seduti.values()].map(s => {
+      const p = this.handInProgress() ? this.state?.players.find(p => p.playerId === s.playerId) : undefined;
+      return { userId: s.playerId, currentUnits: p?.stack ?? s.stack };
+    });
+  }
+
+  addAuthorizedChips(playerId: PlayerId, amount: number): boolean {
+    const seat = this.seduti.get(playerId);
+    if (!seat || this.handInProgress() || !Number.isSafeInteger(amount) || amount <= 0) return false;
+    seat.stack += amount;
+    this.revision += 1;
+    this.broadcast();
+    this.forseAvviaMano();
+    return true;
+  }
+
   close(): void {
     this.closed = true;
     this.clearTurnTimer();
@@ -299,6 +360,7 @@ export class PrivateRoom {
       clearTimeout(this.nextHandTimer);
       this.nextHandTimer = null;
     }
+    this.nextHandDeadline = null;
   }
 
   /**
@@ -309,6 +371,7 @@ export class PrivateRoom {
    * insieme.
    */
   private forseAvviaMano(): void {
+    if (this.checkpointHeld) return;
     if (this.closed) return;
     if (!this.startRequested) return;
     if (this.state !== null && !isHandComplete(this.state)) return;
@@ -317,11 +380,15 @@ export class PrivateRoom {
     const pronti = [...this.seduti.values()].filter((s) => s.stack > 0);
     if (pronti.length < MIN_PLAYERS) return;
 
-    const attesa = this.state === null ? 1_500 : NEXT_HAND_MS;
+    const attesa = this.heldNextDeadline === null ? (this.state === null ? 1_500 : NEXT_HAND_MS) :
+      Math.max(0, this.heldNextDeadline - Date.now());
+    this.nextHandDeadline = Date.now() + attesa;
 
     this.nextHandTimer = setTimeout(() => {
       this.nextHandTimer = null;
-      this.avviaMano();
+      this.nextHandDeadline = null;
+      if (this.dispatch) this.dispatch(() => this.avviaMano());
+      else this.avviaMano();
     }, attesa);
   }
 
@@ -539,11 +606,13 @@ export class PrivateRoom {
 
     this.clearTurnTimer();
     this.turnOwner = chi;
-    this.turnDeadline = Date.now() + TURN_MS;
+    this.turnDeadline = this.heldTurn?.owner === chi && this.heldTurn.deadline !== null
+      ? this.heldTurn.deadline : Date.now() + TURN_MS;
     this.turnTimer = setTimeout(() => {
       this.turnTimer = null;
-      this.scadutoIlTurno(chi);
-    }, TURN_MS);
+      if (this.dispatch) this.dispatch(() => this.scadutoIlTurno(chi));
+      else this.scadutoIlTurno(chi);
+    }, Math.max(0, this.turnDeadline - Date.now()));
   }
 
   /**
@@ -604,7 +673,7 @@ export class PrivateRoom {
     amount: number | undefined,
   ): string {
     const name = this.seduti.get(playerId)?.name ?? playerId;
-    const cifra = amount?.toLocaleString('it-IT') ?? '';
+    const cifra = amount === undefined ? '' : (amount / this.chipScale).toLocaleString('it-IT');
 
     switch (type) {
       case ActionType.Fold:
@@ -644,6 +713,7 @@ export class PrivateRoom {
    * mandarla a tutti significherebbe consegnare le carte altrui.
    */
   private broadcast(): void {
+    if (this.checkpointHeld) return;
     if (this.closed) return;
 
     this.aggiornaTurnTimer();
@@ -685,7 +755,7 @@ export class PrivateRoom {
           playerId: seduto.playerId,
           name: seduto.name,
           seat: seduto.seat,
-          stack: inMano?.stack ?? seduto.stack,
+          stack: complete ? seduto.stack : inMano?.stack ?? seduto.stack,
           committedThisStreet: inMano?.committedThisStreet ?? 0,
           status: inMano?.status ?? PlayerStatus.SittingOut,
           isDealer: seduto.seat === this.dealerSeat,
@@ -748,3 +818,4 @@ export class PrivateRoom {
     };
   }
 }
+

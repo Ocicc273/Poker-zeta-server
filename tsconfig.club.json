@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": [
+    "src/game/club-ledger.ts",
+    "src/game/club-room-manager.ts",
+    "src/wallet/club-session.ts",
+    "src/tests/club.test.ts",
+    "src/tests/club-timer.test.ts"
+  ]
+}
