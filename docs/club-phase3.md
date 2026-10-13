@@ -24,10 +24,16 @@ showdown, Twister, tornei e riconnessione. I test Club simulano l'archivio:
 non sostituiscono la verifica della migrazione e delle policy reali.
 TypeScript dei moduli contabili Club passa con npm run typecheck:club.
 Il trasporto è definito da un confine minimo compatibile con il server; nessuna
-dichiarazione fittizia di Socket.IO. Il controllo completo resta bloccato dalla
-dipendenza socket.io mancante. Rifiuti definitivi e conflitti sospendono il tavolo
+dichiarazione fittizia di Socket.IO. Il controllo completo e 141 test sono passati
+anche su GitHub con Socket.IO reale installato. Rifiuti definitivi e conflitti sospendono il tavolo
 senza ripetizioni infinite; gli errori temporanei conservano i tentativi idempotenti.
 
 Il repository frontend contiene docs/CLUB_FASE3.md, lo script additivo
 supabase/scripts/club_phase3.sql e i controlli di staging
-supabase/tests/club_phase3_checks.sql. Non applicati alla produzione.
+supabase/tests/club_phase3_checks.sql. Script applicato e controlli SQL/RLS passati
+nel PostgreSQL 17 temporaneo del runner, con confine auth.uid simulato. Non applicati
+alla produzione. TypeScript della Edge Function è passato con Deno.
+
+Esecuzione server verificata: https://github.com/Ocicc273/Poker-zeta-server/actions/runs/38423288310
+Commit verificato: 991209f529a6816d59affdf938112e14ba21b796.
+Restano necessarie prove socket multiutente, staging Supabase e accesso gestione Render.
