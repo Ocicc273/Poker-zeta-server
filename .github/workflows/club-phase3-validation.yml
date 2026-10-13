@@ -1,0 +1,28 @@
+name: Verifiche Match Server Club Fase 3
+
+on:
+  push:
+    branches: [codex/club-phase3-20261013]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Dipendenze reali del Match Server, incluso Socket.IO
+        run: bun install --ignore-scripts
+      - name: TypeScript completo e test server
+        run: bun run build
