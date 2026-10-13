@@ -21,6 +21,60 @@ test('Club: decimali esatti, virgola italiana e tutti i preset', () => {
     assert.deepEqual(clubBlinds(smallBlind/100,bigBlind/100),{smallBlind,bigBlind,ante:0});
   assert.throws(()=>clubBlinds(2,1));
 });
+
+test('Club: un rifiuto definitivo non viene ritentato né conferma chips non salvate', async () => {
+  process.env.SUPABASE_URL='https://example.invalid';
+  process.env.SUPABASE_PUBLISHABLE_KEY='test-only';
+  process.env.MATCH_SERVER_SECRET='test-only-not-a-production-secret';
+  process.env.CLUB_PHASE3_ENABLED='true';
+  const manager=await import('../game/club-room-manager.js');
+  const {clubStore,ClubStoreError}=await import('../wallet/club-session.js');
+  const original={...clubStore}, originalMission=manager.clubEffects.recordMissionEvent;
+  manager.clubEffects.recordMissionEvent=async()=>0;
+  const host=randomUUID(),club=randomUUID(),requestId=randomUUID();
+  let saved:ClubCheckpoint|undefined, commits=0, rejectCommit=true;
+  let displayed=0;
+  Object.assign(clubStore,{
+    authorize:async()=>true,receipt:async()=>false,recover:async()=>[structuredClone(saved!)],
+    create:async(state:ClubCheckpoint)=>{saved={...structuredClone(state),code:'FAIL01'};
+      delete saved.allocations[state.hostId];return structuredClone(saved);},
+    commit:async(state:ClubCheckpoint)=>{
+      commits++;
+      if(rejectCommit) throw new ClubStoreError('Permesso admin richiesto',403);
+      saved=structuredClone({...state,version:state.version+1});
+      return saved.version;
+    },
+  });
+  manager.configureClubRooms({to:()=>({emit:(event:string,data:any)=>{
+    if(event==='server:table-state') displayed=data.players[0].stack;
+  }}),sockets:{sockets:new Map()}});
+  try{
+    const code=await manager.createClubRoom(host,host,'Mario',{clubId:club,requestId:randomUUID(),
+      tableName:'Rifiuto definitivo',maxSeats:2,rakePercent:0,smallBlind:0.5,bigBlind:1,
+      initialStacks:{[host]:500}});
+    assert.equal(displayed,500);
+    await assert.rejects(()=>manager.reloadClub(host,code,host,50,requestId),/Permesso admin/);
+    assert.equal(commits,1);
+    assert.equal(saved!.seats[0].reloadUnits,0);
+    assert.equal(displayed,500);
+    assert.equal(manager.clubRoomByCode(code)!.checkpointPending(),true);
+    await assert.rejects(()=>manager.currentClubStacks(host,code),/Salvataggio/);
+    await assert.rejects(()=>manager.reloadClub(host,code,host,50,requestId),/sospeso/);
+    assert.equal(commits,1);
+    await manager.stopClubRooms();
+    await manager.recoverClubRooms();
+    assert.equal(manager.clubRoomByCode(code)!.accountingStacks()[0].stack,50000);
+    rejectCommit=false;
+    await manager.reloadClub(host,code,host,50,requestId);
+    assert.equal(saved!.seats[0].reloadUnits,5000);
+    await manager.closeClub(host,code);
+    assert.equal(saved!.seats[0].finalUnits,55000);
+  }finally{
+    await manager.stopClubRooms();
+    Object.assign(clubStore,original);
+    manager.clubEffects.recordMissionEvent=originalMission;
+  }
+});
 test('Club: quattro stack, ricariche additive e risultato netto', () => {
   const state=checkpoint();
   for (const id of ['mario','luca','anna','paolo']) openClubSeat(state,id,id);
@@ -39,6 +93,7 @@ test('Club: quattro stack, ricariche additive e risultato netto', () => {
   assert.equal(state.seats[1].finalUnits!-state.seats[1].initialUnits-state.seats[1].reloadUnits,-65000);
   closeClubSeat(state,'mario');
   assertClubConservation(state);
+  assert.throws(()=>openClubSeat(state,'mario','Mario'),/autorizzato/);
   state.seats[2].currentUnits++;
   assert.throws(()=>assertClubConservation(state));
 });
@@ -97,7 +152,8 @@ test('Club: server autoritativo, duplicati, reconnect, crash e chiusura automati
   const originals={...clubStore};
   Object.assign(clubStore,{
     authorize:async(id:string,c:string,admin=false)=>c===club && users.has(id) && (!admin || id===host),
-    create:async(state:ClubCheckpoint)=>{ if (!saved) saved={...structuredClone(state),code:'CLUB01'};return structuredClone(saved); },
+    create:async(state:ClubCheckpoint)=>{ if (!saved) {saved={...structuredClone(state),code:'CLUB01'};
+      delete saved.allocations[state.hostId];}return structuredClone(saved); },
     recover:async()=>saved && !saved.closed ? [structuredClone(saved)] : [],
     receipt:async(_code:string,op: any)=>{
       const previous=operations.get(op.id);
@@ -166,6 +222,15 @@ test('Club: server autoritativo, duplicati, reconnect, crash e chiusura automati
     assert.equal(await manager.leaveClub(anna),true);
     assert.equal(await manager.leaveClub(anna),false);
     assert.equal(saved!.seats.find(s=>s.userId===anna)!.finalUnits,beforeLeave);
+    await assert.rejects(()=>manager.joinClubRoom('anna-without-approval',code,anna,'Anna'),/autorizzato/);
+    await assert.rejects(()=>manager.assignClub(luca,code,anna,750,randomUUID()),/Permesso/);
+    await manager.assignClub(host,code,anna,750,randomUUID());
+    await manager.joinClubRoom('anna-new-authorized-session',code,anna,'Anna');
+    const visits=saved!.seats.filter(s=>s.userId===anna);
+    assert.equal(visits.length,2);
+    assert.equal(visits[0].finalUnits,beforeLeave);
+    assert.equal(visits[1].initialUnits,75000);
+    assert.equal(saved!.allocations[anna],undefined);
     await manager.startClub(host);
     await new Promise(r=>setTimeout(r,6050));
     assert.equal(manager.clubRoomByCode(code)!.handInProgress(),true);
@@ -183,7 +248,7 @@ test('Club: server autoritativo, duplicati, reconnect, crash e chiusura automati
     assert(saved!.seats.every(s=>s.finalUnits!==null));
     assertClubConservation(saved!);
     assert.equal(await manager.closeClub(host,code),true);
-    assert.equal(saved!.seats.length,4);
+    assert.equal(saved!.seats.length,5);
     assert.equal(missionCount,5); // Una creazione e quattro partecipanti alla mano conclusa.
   } finally {
     await manager.stopClubRooms();

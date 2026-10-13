@@ -22,4 +22,5 @@ import './tournament.test.js';
 import './private-room.test.js';
 import './omaha.test.js';
 import './club.test.js';
+import './club-timer.test.js';
 

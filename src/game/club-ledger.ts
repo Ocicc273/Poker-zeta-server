@@ -71,7 +71,7 @@ export function assertClubConservation(state: ClubCheckpoint): void {
   if (remaining + state.rakeUnits !== loaded) throw new Error('Conservazione delle chips violata.');
 }
 
-export function openClubSeat(state: ClubCheckpoint, userId: string, name: string): ClubSeat {
+export function openClubSeat(state: ClubCheckpoint, userId: string, name: string, consume = true): ClubSeat {
   const existing = state.seats.find(s => s.userId === userId && s.closedAt === null);
   if (existing) return existing;
   const amount = state.allocations[userId];
@@ -79,6 +79,7 @@ export function openClubSeat(state: ClubCheckpoint, userId: string, name: string
   const seat: ClubSeat = { id: randomUUID(), userId, name, initialUnits: amount, reloadUnits: 0,
     currentUnits: amount, finalUnits: null, openedAt: new Date().toISOString(), closedAt: null };
   state.seats.push(seat);
+  if (consume) delete state.allocations[userId];
   return seat;
 }
 

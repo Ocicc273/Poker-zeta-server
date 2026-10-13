@@ -1,24 +1,32 @@
-import type { Server } from 'socket.io';
 import { randomUUID } from 'node:crypto';
 import { PrivateRoom } from './private-room.js';
-import type { CreateTableRequest } from './private-room-manager.js';
-import type { ActionType, PlayerId } from '../engine/index.js';
+import type { ActionType } from '../engine/index.js';
 import type { TableView } from './protocol.js';
 import { ServerEvent } from './protocol.js';
-import { clubStore } from '../wallet/club-session.js';
+import { clubStore, ClubStoreError } from '../wallet/club-session.js';
 import { recordMissionEvent } from '../wallet/table-session.js';
 import { chipUnits, clubBlinds, assertClubConservation, openClubSeat, reloadClubSeat,
   closeClubSeat, ClubGate, type ClubCheckpoint, type ClubOperation } from './club-ledger.js';
 
 export const clubPhase3Enabled = process.env.CLUB_PHASE3_ENABLED === 'true';
 export const clubEffects = { recordMissionEvent };
+/** Confine minimo del trasporto: il motore contabile non dipende da Socket.IO. */
+export interface ClubTransport {
+  to(id: string): { emit(event: string, data?: unknown): unknown };
+  sockets: { sockets: { get(id: string): { disconnect(close?: boolean): unknown } | undefined } };
+}
+export interface ClubCreateRequest {
+  gameMode?: unknown; requestId?: unknown; clubId?: unknown; tableName?: unknown;
+  smallBlind?: unknown; bigBlind?: unknown; initialStacks?: unknown;
+  maxSeats: unknown; rakePercent: unknown;
+}
 type Entry = { state: ClubCheckpoint; room: PrivateRoom; gate: ClubGate; baseRake: number; closing: boolean;
   blocked: boolean; pendingMissions: string[] };
 const tables = new Map<string, Entry>();
 const players = new Map<string, string>();
 const sockets = new Map<string, string>();
-let io: Server;
-export function configureClubRooms(server: Server) { io = server; }
+let io: ClubTransport;
+export function configureClubRooms(server: ClubTransport) { io = server; }
 function emit(userId: string, event: string, data: unknown) {
   const socket = sockets.get(userId);
   if (socket) io?.to(socket).emit(event, data);
@@ -77,10 +85,16 @@ async function persist(entry: Entry, operation: ClubOperation): Promise<void> {
   for (;;) {
     try {
       const next = await clubStore.commit(entry.state, operation);
-      if (next !== version + 1) throw new Error('Versione contabile non coerente.');
+      if (next !== version + 1) throw new ClubStoreError('Versione contabile non coerente.', 409);
       entry.state.version = next;
       return;
     } catch (error) {
+      if (error instanceof ClubStoreError && !error.transient) {
+        entry.blocked = true;
+        for (const id of entry.room.playerIds()) emit(id, ServerEvent.Error,
+          { message: 'Contabilità sospesa: ' + error.message });
+        throw error;
+      }
       if (attempts++ === 0) for (const id of entry.room.playerIds())
         emit(id, ServerEvent.Error, { message: 'Salvataggio contabile in attesa. Tavolo temporaneamente sospeso.' });
       console.error('Commit Club in attesa:', operation.id, (error as Error).message);
@@ -108,7 +122,7 @@ function run(entry: Entry, operation: ClubOperation, mutate: () => void): Promis
     for (const id of entry.pendingMissions.splice(0))
       void clubEffects.recordMissionEvent(id, 'private_hands_played', 1);
     entry.room.resumeCheckpoint();
-    publish(entry);
+    if (operation.kind !== 'action' || before.inHand !== entry.state.inHand) publish(entry);
     return true;
   });
 }
@@ -117,7 +131,8 @@ function attach(state: ClubCheckpoint): Entry {
   let entry!: Entry;
   const room = new PrivateRoom({
     code: state.code, hostId: state.hostId, buyIn: 1000, maxSeats: state.maxSeats,
-    startingStack: state.allocations[state.hostId], rakePercent: state.rakePercent, manualStart: true,
+    startingStack: state.seats.find(s => s.userId === state.hostId && s.closedAt === null)?.initialUnits ?? 0,
+    rakePercent: state.rakePercent, manualStart: true,
     clubBlinds: { smallBlind: state.smallBlind, bigBlind: state.bigBlind, ante: 0 },
     sendState: (id, view) => emit(id, ServerEvent.TableState, chipView({ ...view,
       privateRakeTotal: view.privateRakeTotal == null ? null : entry.baseRake + view.privateRakeTotal })),
@@ -149,7 +164,7 @@ export async function recoverClubRooms(): Promise<void> {
   }
 }
 
-export async function createClubRoom(socketId: string, hostId: string, name: string, request: CreateTableRequest) {
+export async function createClubRoom(socketId: string, hostId: string, name: string, request: ClubCreateRequest) {
   if (request.gameMode !== undefined && request.gameMode !== 'holdem') throw new Error('Nei Club è disponibile Hold’em.');
   if (!request.requestId || typeof request.requestId !== 'string') throw new Error('Identificativo richiesta obbligatorio.');
   if (entryFor(hostId) && entryFor(hostId)!.state.requestId !== request.requestId)
@@ -165,7 +180,8 @@ export async function createClubRoom(socketId: string, hostId: string, name: str
     maxSeats: Number(request.maxSeats), rakePercent: Number(request.rakePercent),
     smallBlind: blinds.smallBlind, bigBlind: blinds.bigBlind, allocations, seats: [], rakeUnits: 0, version: 0,
     closed: false, inHand: false };
-  openClubSeat(state, hostId, name);
+  // Il database consuma atomicamente l'autorizzazione dell'host alla creazione.
+  openClubSeat(state, hostId, name, false);
   const saved = await clubStore.create(state, request.requestId);
   const existing = tables.get(saved.code);
   const entry = existing ?? attach(saved);
@@ -183,6 +199,7 @@ export async function joinClubRoom(socketId: string, code: string, userId: strin
   if (entry.room.eSeduto(userId)) {
     bind(userId, socketId);
     entry.room.siediti(userId, name, 0);
+    publish(entry);
     return entry.room;
   }
   await run(entry, { id: randomUUID(), kind: 'join', actor: userId, target: userId }, () => {
@@ -199,7 +216,9 @@ export async function joinClubRoom(socketId: string, code: string, userId: strin
 export function detachClubSocket(userId: string, socketId: string) {
   if (sockets.get(userId) !== socketId) return;
   sockets.delete(userId);
-  entryFor(userId)?.room.disconnetti(userId);
+  const entry = entryFor(userId);
+  entry?.room.disconnetti(userId);
+  if (entry) publish(entry);
 }
 export async function actClub(userId: string, type: ActionType, amount?: unknown, requestId?: string): Promise<boolean> {
   const entry = entryFor(userId);
