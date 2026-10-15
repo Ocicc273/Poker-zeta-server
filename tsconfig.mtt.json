@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": ["src/game/mtt-engine.ts", "src/game/mtt-service.ts", "src/game/mtt-protocol.ts", "src/wallet/mtt.ts", "src/tests/mtt.test.ts"]
+}

@@ -1,0 +1,22 @@
+name: Tornei multiplayer persistenti
+on:
+  push:
+    branches: [codex/tornei-multiplayer-20261015]
+  pull_request:
+    paths: ['src/game/mtt*', 'src/wallet/mtt.ts', 'src/engine/cards.ts', 'src/tests/mtt*', 'src/index.ts']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --ignore-scripts
+      - name: TypeScript e regressioni con Socket.IO reale
+        run: bun run build

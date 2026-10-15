@@ -268,6 +268,27 @@ export class Deck {
     this.cards = createShuffledDeck(random);
   }
 
+  /** Checkpoint privato: non inviare mai queste carte al browser. */
+  snapshot(): { cards: Card[]; position: number } {
+    return { cards: this.cards.map(c => ({ ...c })), position: this.position };
+  }
+
+  static restore(value: { cards: readonly Card[]; position: number }): Deck {
+    if (!value || !Array.isArray(value.cards) || value.cards.length !== 52 ||
+      !Number.isInteger(value.position) || value.position < 0 || value.position > 52) {
+      throw new Error('Checkpoint mazzo non valido');
+    }
+    const canonical = createDeck();
+    const cards = value.cards.map(c => canonical.find(x => x.rank === c.rank && x.suit === c.suit));
+    if (cards.some(c => !c) || new Set(cards.map(c => c!.rank + c!.suit)).size !== 52) {
+      throw new Error('Carte duplicate o non valide nel checkpoint');
+    }
+    const deck = Object.create(Deck.prototype) as Deck;
+    Object.defineProperty(deck, 'cards', { value: cards.map(c => ({ ...c! })), writable: false });
+    deck.position = value.position;
+    return deck;
+  }
+
   /** Carte non ancora distribuite. */
   get remaining(): number {
     return this.cards.length - this.position;
@@ -312,3 +333,4 @@ export class Deck {
     return this.draw();
   }
 }
+

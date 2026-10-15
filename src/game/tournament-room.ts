@@ -80,17 +80,23 @@ export class TournamentRoom {
   }
 
   view(viewer: string, now: number): TableView | null {
-    const hand = this.hand;
-    if (!hand || !this.players.some(p => p.id === viewer)) return null;
+    return tournamentHandView(this.id, this.players, this.hand, this.deadline, viewer, now);
+  }
+}
+
+/** Proiezione condivisa: nessun mazzo o carta privata di altri giocatori. */
+export function tournamentHandView(id: string, players: TournamentPlayer[], hand: HandState | null,
+  deadline: number | null, viewer: string, now: number): TableView | null {
+    if (!hand || !players.some(p => p.id === viewer)) return null;
     const complete = isHandComplete(hand);
     const result = showdownView(hand);
     const revealedIds = new Set(result.showdown.map(p => p.playerId));
     return {
       ...result,
-      tableId: this.id, format: 'tournament', handId: hand.handId, street: hand.street,
+      tableId: id, format: 'tournament', handId: hand.handId, street: hand.street,
       communityCards: hand.communityCards, pot: currentPotTotal(hand), currentBet: hand.currentBet,
       toActPlayerId: hand.toActPlayerId, yourPlayerId: viewer,
-      players: this.players.map(p => {
+      players: players.map(p => {
         const state = hand.players.find(x => x.playerId === p.id);
         const visible = p.id === viewer || revealedIds.has(p.id);
         return { playerId: p.id, name: p.name, seat: p.seat, stack: state?.stack ?? p.stack,
@@ -100,11 +106,9 @@ export class TournamentRoom {
       }),
       availableActions: !complete && hand.toActPlayerId === viewer ? getAvailableActions(hand) : [],
       isYourTurn: !complete && hand.toActPlayerId === viewer,
-      turnMillisLeft: this.deadline === null ? null : Math.max(0, this.deadline - now),
+      turnMillisLeft: deadline === null ? null : Math.max(0, deadline - now),
       isHandComplete: complete, canStartNextHand: false,
-      isBusted: this.players.find(p => p.id === viewer)!.stack === 0,
+      isBusted: players.find(p => p.id === viewer)!.stack === 0,
       payouts: complete ? hand.payouts : [], blinds: hand.config.blinds, log: [],
     };
-  }
 }
-
