@@ -27,6 +27,9 @@ import { env } from './config/env.js';
 import { TournamentService } from './game/tournament-service.js';
 import { TournamentEvent, type TournamentAction, type TournamentReply } from './game/tournament-protocol.js';
 import { tournamentStore } from './wallet/tournament.js';
+import { MttService } from './game/mtt-service.js';
+import { mttStore } from './wallet/mtt.js';
+import { attachMtt } from './game/mtt-socket.js';
 import { SeatGate } from './game/seat-gate.js';
 import { verifyAccessToken } from './auth/verify-token.js';
 import * as engine from './engine/index.js';
@@ -169,6 +172,7 @@ configureTwisterManager(io);
 configurePrivateRoomManager(io);
 
 const tournaments = new TournamentService(tournamentStore);
+const mtt = new MttService(mttStore);
 const seatGate = new SeatGate();
 let tournamentTickPending = false;
 const tournamentTimer = setInterval(() => {
@@ -176,13 +180,21 @@ const tournamentTimer = setInterval(() => {
   tournamentTickPending = true;
   void tournaments.tick().finally(() => { tournamentTickPending = false; });
 }, 500);
+let mttTickPending = false;
+const mttTimer = setInterval(() => {
+  if (mttTickPending) return;
+  mttTickPending = true;
+  void mtt.tick().catch(error => console.error('Scheduler tornei:', (error as Error).message))
+    .finally(() => { mttTickPending = false; });
+}, 500);
 async function closeAllTournaments(): Promise<void> {
   clearInterval(tournamentTimer);
-  await tournaments.shutdown();
+  clearInterval(mttTimer);
+  await Promise.allSettled([tournaments.shutdown(), mtt.shutdown()]);
 }
 function enterNonTournament<T>(userId: string, job: () => T | Promise<T>): Promise<T> {
   return seatGate.run(userId, () => {
-    if (shuttingDown || tournaments.hasPlayer(userId)) throw new WalletError('Hai un torneo in corso oppure il server si sta riavviando.');
+    if (shuttingDown || tournaments.hasPlayer(userId) || mtt.hasPlayer(userId)) throw new WalletError('Hai un torneo in corso oppure il server si sta riavviando.');
     return job();
   });
 }
@@ -211,6 +223,11 @@ io.on('connection', (socket) => {
   console.log(`Giocatore autenticato: ${label} [${player.userId}]`);
   socket.emit(ServerEvent.Welcome, player);
   socket.emit('server:club-capabilities', { phase3: clubPhase3Enabled });
+  attachMtt(socket, player, mtt, job => seatGate.run(player.userId, async () => {
+    if (shuttingDown || tournaments.hasPlayer(player.userId) || getRoomByPlayer(player.userId) ||
+      getTwisterByPlayer(player.userId) || getPrivateTableByPlayer(player.userId)) throw new Error('Chiudi il tavolo attuale prima di iscriverti.');
+    await job();
+  }));
   const clubRequest = (job: () => Promise<unknown>, reply?: (result: { ok: boolean; error?: string; data?: unknown }) => void) => {
     void job().then(data => { if (typeof reply === 'function') reply({ ok: true, data }); }).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : 'Operazione Club non riuscita.';
@@ -235,7 +252,7 @@ io.on('connection', (socket) => {
   socket.on(TournamentEvent.Watch, (_: unknown, reply) => tournamentRequest(() =>
     tournaments.watch(socket.id, player.userId, state => socket.emit(TournamentEvent.State, state)), reply));
   socket.on(TournamentEvent.Join, (payload, reply) => tournamentRequest(() => seatGate.run(player.userId, async () => {
-    if (shuttingDown || getRoomByPlayer(player.userId) || getTwisterByPlayer(player.userId) || getPrivateTableByPlayer(player.userId)) {
+    if (shuttingDown || mtt.hasPlayer(player.userId) || getRoomByPlayer(player.userId) || getTwisterByPlayer(player.userId) || getPrivateTableByPlayer(player.userId)) {
       throw new Error('Chiudi il tavolo attuale prima di iscriverti al torneo.');
     }
     await tournaments.join(payload?.id, player.userId, player.username ?? 'Giocatore');
@@ -603,6 +620,7 @@ io.on('connection', (socket) => {
 // aperta in questi millisecondi verrebbe annullata a tavolo vivo.
 const orfane = await reconcileOrphanSessions();
 await recoverClubRooms();
+await mtt.refresh();
 console.log(
   orfane > 0
     ? `Riconciliazione: ${orfane} sessioni annullate e rimborsate.`

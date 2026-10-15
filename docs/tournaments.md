@@ -40,3 +40,9 @@ e non addebita iscrizioni. Push Git non applica automaticamente le migrazioni.
   Eseguire `node --test strumenti/tournament-db.test.mjs`.
 - Prova manuale con almeno due account: iscrizione, rientro, eliminazione e premio;
   poi riavvio server e rimborso.
+
+
+## Formato gratuito multi-tavolo
+
+Per il nuovo formato separato vedere [multiplayer-tournaments.md](multiplayer-tournaments.md).
+Le regole e il recupero descritti sopra riguardano il torneo classico in Z-Coins.
